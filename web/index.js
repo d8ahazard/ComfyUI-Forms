@@ -19,6 +19,7 @@ function createToolbarButton() {
 }
 
 const log = console.log.bind(console, "[MobileForm]");
+const error = console.error.bind(console, "[MobileForm]");
 
 const BASE_PATH = import.meta.url.replace(/\/[^/]*$/, "");
 
@@ -38,23 +39,33 @@ app.registerExtension({
         const ui_root_elem = document.createElement('div');
         ui = new MobileFormUI(app, ui_root_elem);
 
-        document.querySelector(".graph-canvas-container")?.appendChild(ui_root_elem);
+        const graph_canvas_container = document.querySelector(".graph-canvas-container");
+        if(!graph_canvas_container) {
+            error("Couldn't find a place to add main MobileForm UI!");
+            return;
+        }
+
+        graph_canvas_container.appendChild(ui_root_elem);
     },
     async setup(_) {
+        // FIXME: this doesn't exist when sidebar is folded. Need another way to inject button.
         const toolbar_end = /** @type {HTMLDivElement|null} */ (document.querySelector("div.side-tool-bar-end"));
-        if(toolbar_end) {
-            const toolbar_button = createToolbarButton();
-            toolbar_button.addEventListener('click', () => {
-                ui.toggleVisible();
-                
-                for(const textarea of document.querySelectorAll(".graph-canvas-container>.comfy-multiline-input")) {
-                    if(ui.visible) textarea.classList.add("comfy-mobile-form-hidden");
-                    else textarea.classList.remove("comfy-mobile-form-hidden");
-                }
-            });
-
-            toolbar_end.insertBefore(toolbar_button, toolbar_end.firstChild);
+        if(!toolbar_end) {
+            error("Couldn't find a place to add toolbar button.");
+            return;
         }
+
+        const toolbar_button = createToolbarButton();
+        toolbar_button.addEventListener('click', () => {
+            ui.toggleVisible();
+            
+            for(const textarea of document.querySelectorAll(".graph-canvas-container>.comfy-multiline-input")) {
+                if(ui.visible) textarea.classList.add("comfy-mobile-form-hidden");
+                else textarea.classList.remove("comfy-mobile-form-hidden");
+            }
+        });
+
+        toolbar_end.insertBefore(toolbar_button, toolbar_end.firstChild);
     },
     async afterConfigureGraph(_, app) {
         ui?.setGraph(app.graph);
