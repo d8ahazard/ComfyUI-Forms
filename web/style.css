@@ -18,6 +18,8 @@
     flex-direction: column;
     gap: .3em;
     padding: .25em .4em;
+
+    z-index: 999;
 }
 
 .comfy-mobile-form-hidden {

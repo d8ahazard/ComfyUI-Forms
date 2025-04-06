@@ -28,6 +28,8 @@ MobileForm can only be used with the new menu layout. Ensure that the "Use new m
 
 Simple primitive nodes for numbers and text works the best. Other nodes may or may not work.
 
+If the MobileForm icon is not visible, then try adding `#mobile` to the URL and refreshing the page.
+
 ## Installation
 
 At the `custom_nodes` directory of your ComfyUI installation, clone this repository, which can be done via following git command.
