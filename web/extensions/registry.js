@@ -179,7 +179,6 @@ class ExtensionRegistryClass {
         for (const [name, initFn] of this.extensions) {
             try {
                 initFn(this);
-                console.log(`[MobileForm] Extension loaded: ${name}`);
             } catch (e) {
                 console.error(`[MobileForm] Failed to load extension: ${name}`, e);
             }

@@ -1,153 +1,273 @@
-# ComfyUI MobileForm
+# ComfyUI Forms
 
-A fully-featured form interface extension for [ComfyUI](https://github.com/comfyanonymous/ComfyUI) that provides a clean, mobile-friendly UI for controlling workflows and viewing outputs.
+> **The Ultimate Form Interface for ComfyUI** — Transform your complex workflows into beautiful, user-friendly forms with real-time output previews, customizable layouts, and a stunning modern UI.
+
+<div align="center">
 
 ![Mobile UI Example](./docs/example-ui.png)
 
-## Features
+**Turn any ComfyUI workflow into an intuitive form interface**
 
-### Input Support
-- **All native widget types**: Numbers, text, dropdowns, toggles, sliders, seeds, and more
-- **Smart number inputs**: With increment/decrement buttons, min/max/step constraints
-- **Multi-line text**: Auto-resizing textareas for prompts
-- **Searchable dropdowns**: For lists with many options
-- **Image upload**: With drag-drop, file picker, and camera capture on mobile
-- **Video upload**: Full video file support
+</div>
 
-### Output Display
-- **Real-time previews**: See generated images and videos as they complete
-- **Gallery view**: Scrollable grid of all outputs
-- **Fullscreen preview**: Tap to view images/videos in fullscreen
-- **Download buttons**: Quick download of any output
-- **Progress tracking**: Live progress bar and status updates
+---
 
-### User Interface
-- **Mobile-first design**: Touch-optimized with large tap targets
-- **Desktop support**: Side panel mode for desktop use
-- **Dark theme**: Automatically inherits ComfyUI's theme
-- **Tabs**: Switch between Inputs and Outputs
-- **Queue controls**: Queue, Queue to Front, and Cancel buttons built-in
+## ✨ Features at a Glance
 
-## Installation
+| Feature | Description |
+|---------|-------------|
+| 📱 **Mobile-First** | Touch-optimized design with large tap targets |
+| 🖥️ **Desktop Support** | Side panel mode for split-view editing |
+| 🎨 **Customizable Layouts** | Per-widget width, height, color, and positioning |
+| 🔍 **Smart Search** | Filter widgets instantly by name |
+| 📦 **Batch Queue** | Queue multiple runs with auto-incrementing seeds |
+| ⌨️ **Keyboard Shortcuts** | Full keyboard navigation support |
+| 🎯 **Drag & Drop** | Reorganize widgets with intuitive drag-and-drop |
+| 💾 **Workflow Persistence** | Layout settings saved with your workflow |
+| 🎬 **Output Gallery** | Grid/list views, copy to clipboard, fullscreen preview |
+| 🔔 **Live Status** | Real-time progress, node count, and ETA |
+| ♿ **Accessible** | ARIA labels, focus trapping, keyboard navigation |
 
-### Via ComfyUI Manager
+---
+
+## 🚀 What's New (v2.0)
+
+### Layout Customization
+- **Per-widget settings**: Customize width (1-4 columns), height, and color for each widget
+- **Context menu**: Right-click any widget's ⚙️ dot to access settings
+- **Bypass nodes**: Toggle bypass directly from the form with visual feedback
+- **Collapsible sections**: Organize widgets into collapsible groups
+- **Custom tooltips**: Add helpful hints to any widget
+
+### Enhanced Outputs
+- **Gallery views**: Toggle between grid and list layouts
+- **Copy to clipboard**: One-click copy images to clipboard
+- **Video support**: Full video playback with error handling
+- **Clear outputs**: Remove all outputs with confirmation dialog
+
+### Productivity Features
+- **Batch queue**: Queue multiple runs with seed increment
+- **Search/filter**: Find widgets instantly with `/` shortcut
+- **Keyboard shortcuts**: `Q` queue, `E` edit mode, `Tab` switch tabs
+- **Status bar**: Node progress (3/15), ETA, and completion time
+
+### Quality of Life
+- **Persistent settings**: All customizations saved with workflow
+- **Smooth animations**: Section collapse, widget fade-in, progress pulse
+- **Empty states**: Beautiful illustrated guides when getting started
+- **Confirmation dialogs**: Protect against accidental data loss
+
+---
+
+## 📦 Installation
+
+### Via ComfyUI Manager (Recommended)
 1. Open ComfyUI Manager
-2. Search for "MobileForm"
-3. Click Install
+2. Search for "**ComfyUI-Forms**"
+3. Click **Install**
+4. Restart ComfyUI
 
 ### Manual Installation
-Clone this repository into your `custom_nodes` directory:
-
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/123jimin/ComfyUI-MobileForm
+git clone https://github.com/your-repo/ComfyUI-Forms
 ```
 
-## How to Use
+---
 
-### Setting Up Input Groups
+## 🎯 Quick Start
 
-1. Create a group in your workflow named **"Mobile Form"**, **"Mobile UI"**, or **"Mobile Inputs"**
-2. Place input nodes inside the group (primitives, samplers, etc.)
-3. The form will automatically generate controls for all widgets
+### 1. Create a Mobile Form Group
+Create a group in your workflow named one of:
+- `Mobile Form`
+- `Mobile UI`
+- `Mobile Inputs`
 
-### Setting Up Output Groups
+### 2. Add Your Nodes
+Place input nodes inside the group:
+- Primitive nodes (strings, numbers, etc.)
+- KSampler for settings like steps, cfg
+- Load Image/Video nodes
+- Any node with configurable widgets
 
-1. Create a group named **"Outputs"** or **"Mobile Outputs"**
-2. Place output nodes inside (PreviewImage, SaveImage, VHS_VideoCombine, etc.)
-3. Generated outputs will appear in the Outputs tab
+### 3. Create an Outputs Group (Optional)
+Create a group named:
+- `Mobile Outputs` (recommended)
+- `Outputs`
 
-### Accessing the Form
+Place your output nodes inside (SaveImage, PreviewImage, VHS_VideoCombine, etc.)
 
-**On Mobile:**
-- Add `#mobile` to your URL to auto-show the form
-- Or tap the mobile phone icon in the sidebar
+### 4. Open the Form
+- **Mobile**: Add `#mobile` to URL or tap the 📱 icon in the sidebar
+- **Desktop**: Click the "Form" button in the menu bar
 
-**On Desktop:**
-- Click the "Form" button in the top menu bar
-- Or click the mobile phone icon in the sidebar
-- Use the settings to enable "Side panel mode" for a split view
+---
 
-### Keyboard Shortcut
+## ⌨️ Keyboard Shortcuts
 
-You can access the form programmatically:
+| Shortcut | Action |
+|----------|--------|
+| `Q` | Queue prompt |
+| `Shift+Q` | Queue to front |
+| `E` | Toggle edit mode |
+| `Tab` | Switch between Inputs/Outputs |
+| `/` | Focus search bar |
+| `Escape` | Close dialogs / exit edit mode |
+
+---
+
+## 🎨 Customizing Widgets
+
+### Accessing Widget Settings
+Click the ⚙️ dot on any widget to open the context menu:
+
+- **Width**: Set column span (1-4)
+- **Height**: Auto, Compact, Medium, or Tall
+- **Color**: 12+ colors including blue, green, purple, pink, amber
+- **New Row**: Start this widget on a new line
+- **Bypass Node**: Toggle node bypass on/off
+- **Move**: Reorder widgets up/down
+- **Edit Tooltip**: Add custom help text
+
+### Layout Tips
+1. **Use subgroups**: Nodes in subgroups within Mobile Form automatically get grouped into sections
+2. **Color coding**: Use colors to categorize related settings
+3. **Row breaks**: Add "new row" to logically separate widget groups
+4. **Column widths**: Wide widgets (2-4) work great for prompts and images
+
+---
+
+## 📤 Output Features
+
+### Gallery Controls
+- **Grid/List toggle**: Switch between thumbnail grid and detailed list view
+- **Fullscreen**: Click any output to view fullscreen
+- **Copy**: Copy images directly to clipboard (📋 button)
+- **Download**: Save outputs with original filename
+
+### Video Support
+Full support for video outputs from nodes like:
+- VHS_VideoCombine
+- SaveVideo
+- Animated WebP/GIF outputs
+
+---
+
+## 📦 Batch Queue
+
+Queue multiple generations with automatic seed increment:
+
+1. Click the **📦 Batch** button
+2. Set number of runs (1-100)
+3. Enable "Increment seed for each run"
+4. Click **Queue Batch**
+
+Each run will use an incrementing seed value, perfect for generating variations!
+
+---
+
+## 💾 Saving Your Layout
+
+### Automatic Persistence
+Add a `MobileFormSettings` node to your workflow. All widget customizations (width, height, color, order, tooltips) are automatically saved with the workflow file.
+
+### Migration from v1
+If you have existing localStorage settings, they'll automatically migrate to your workflow the first time you add the MobileFormSettings node.
+
+---
+
+## 🔌 Extension System
+
+ComfyUI-Forms supports additional node packs through its extension system:
+
+### Built-in Support
+- **Core ComfyUI**: All standard nodes
+- **VHS (Video Helper Suite)**: Video combine, load video
+- **KJNodes**: Special input types
+- **InterPositive**: Custom helpers
+
+### Adding Custom Extensions
+Extensions can register handlers for custom node types, widgets, and outputs:
 
 ```javascript
-window.MobileFormUI.toggle()  // Toggle visibility
-window.MobileFormUI.show()    // Show the form
-window.MobileFormUI.hide()    // Hide the form
+import { ExtensionRegistry } from './extensions/registry.js';
+
+ExtensionRegistry.registerNodeHandler('MyCustomNode', (elem, node) => {
+  // Create custom widget UI
+  return true;
+});
 ```
 
-## Supported Widget Types
+---
 
-| Widget Type | Form Control | Features |
-|-------------|--------------|----------|
-| `combo` | Dropdown select | Searchable for long lists |
-| `number` | Number input | +/- buttons, min/max/step |
-| `INT` | Integer input | Whole numbers only |
-| `FLOAT` | Decimal input | Configurable precision |
-| `string`/`text` | Text input | Single line |
-| `customtext` | Textarea | Multi-line, auto-resize |
-| `boolean`/`toggle` | Toggle switch | On/Off |
-| `button` | Button | Triggers callbacks |
-| `slider` | Range slider | Visual value selection |
-| `seed` | Seed input | Random button + last seed |
-| `image` | File upload | Drag-drop, camera |
-| `video` | File upload | Video files |
+## 🎛️ Settings
 
-## Supported Output Nodes
+Access settings via the ⚙️ button next to the Form menu item:
 
-- PreviewImage
-- SaveImage
-- VHS_VideoCombine
-- ADE_AnimateDiffCombine
-- SaveAnimatedWEBP
-- SaveAnimatedPNG
-- CR Image Output
-- And more...
+| Setting | Description |
+|---------|-------------|
+| Auto-show on mobile | Automatically display form on mobile devices |
+| Side panel mode | Show form as side panel instead of overlay |
 
-## Settings
+---
 
-Access settings via the gear icon next to the Form button:
+## 🔧 Troubleshooting
 
-- **Auto-show on mobile**: Automatically show form view on mobile devices
-- **Side panel mode**: Display as a side panel instead of fullscreen (desktop)
+### Form not appearing?
+- Ensure you have a group named "Mobile Form" or similar
+- Check that nodes are fully inside the group boundaries
+- Try adding `#mobile` to your URL
 
-## Example Workflow
+### Widgets missing?
+- Converted (socket) widgets don't show in the form
+- Hidden widgets are excluded
+- Some widget types may not be supported yet
 
-![Workflow Example](./docs/example-workflow.png)
+### Outputs not showing?
+- Create a "Mobile Outputs" group
+- Place output nodes inside the group
+- Run the workflow to generate outputs
 
-A simple SDXL workflow with:
-- Input group containing: prompt, seed, steps, cfg
-- Output group containing: PreviewImage node
+### Layout not saving?
+- Add a `MobileFormSettings` node to your workflow
+- Save the workflow after customizing
 
-## Tips
+---
 
-1. **Organize nodes by rows**: Nodes at similar Y positions will appear in the same row
-2. **Use descriptive titles**: Node titles become form labels
-3. **Collapse complex nodes**: Nodes with 3+ widgets auto-collapse with an expand button
-4. **Use Note nodes**: Add instructions or descriptions to your form
+## 🤝 Contributing
 
-## Troubleshooting
+Contributions are welcome! Please feel free to submit issues and pull requests.
 
-**Form not showing?**
-- Make sure you have a group titled "Mobile Form" or "Mobile UI"
-- Try adding `#mobile` to your URL and refreshing
-- Check browser console for errors
+### Development
+```bash
+# Clone the repo
+git clone https://github.com/your-repo/ComfyUI-Forms
+cd ComfyUI-Forms
 
-**Widgets not appearing?**
-- Ensure nodes are inside the group bounds (top-left corner must be in the group)
-- Some converted or hidden widgets may not display
+# The extension uses vanilla JavaScript with JSDoc types
+# No build step required - edit files directly
+```
 
-**Outputs not showing?**
-- Make sure output nodes are in an "Outputs" group
-- Run the workflow first to generate outputs
+---
 
-## License
+## 📜 License
 
 MIT License - See [LICENSE](./LICENSE) for details.
 
-## Credits
+---
 
-Originally created by [123jimin](https://github.com/123jimin).
-Enhanced with full widget support, output display, and desktop UI.
+## 🙏 Credits
+
+- Originally created by [123jimin](https://github.com/123jimin)
+- Enhanced with extensive features by the community
+- Built for the amazing ComfyUI ecosystem
+
+---
+
+<div align="center">
+
+**Made with ❤️ for the ComfyUI Community**
+
+[Report Bug](https://github.com/your-repo/ComfyUI-Forms/issues) · [Request Feature](https://github.com/your-repo/ComfyUI-Forms/issues)
+
+</div>

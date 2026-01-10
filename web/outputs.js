@@ -3,7 +3,7 @@
 // @ts-ignore
 import { api } from "../../scripts/api.js";
 import { ExtensionRegistry, createAudioPlayer, getViewUrl } from './extensions/index.js';
-import { createWidgetFromNode } from './widget.js';
+import { createWidgetFromNode, showConfirmDialog } from './widget.js';
 
 /** @import {ComfyUIGraphNode} from "./types" */
 
@@ -80,6 +80,9 @@ export class OutputsManager {
     /** @type {HTMLDivElement|null} */
     #widgetsContainer = null;
 
+    /** @type {Map<string, Function>} */
+    #eventListeners = new Map();
+
     /**
      * @param {HTMLDivElement} container 
      */
@@ -88,6 +91,20 @@ export class OutputsManager {
         this.#container.classList.add('comfy-mobile-form-outputs');
         this.#setupEventListeners();
         this.render();
+    }
+
+    /**
+     * Cleanup event listeners and resources
+     */
+    destroy() {
+        // Remove all API event listeners
+        for (const [eventName, listener] of this.#eventListeners) {
+            api.removeEventListener(eventName, listener);
+        }
+        this.#eventListeners.clear();
+        this.#outputs = [];
+        this.#nodeOutputs.clear();
+        this.#container.innerHTML = '';
     }
     
     /**
@@ -189,7 +206,6 @@ export class OutputsManager {
                 const nodeId = parseInt(nodeIdStr, 10);
                 
                 // Debug: log the output structure
-                console.log('[MobileForm Outputs] Node output:', nodeId, Object.keys(nodeOutput), nodeOutput);
                 
                 // Check if this node should be tracked
                 if (!this.#shouldTrackNode(nodeId)) continue;
@@ -218,16 +234,21 @@ export class OutputsManager {
                         if (!exists) {
                             const filename = img.filename;
                             const ext = String(filename).toLowerCase().split('.').pop();
-                            const isVideo = ['mp4', 'webm', 'webp', 'mov', 'avi', 'mkv'].includes(ext || '');
+                            // Video extensions (webp excluded - can be static)
+                            const isVideo = ['mp4', 'webm', 'mov', 'avi', 'mkv'].includes(ext || '');
                             const isGif = ext === 'gif';
+                            const isWebp = ext === 'webp';
                             
-                            // Determine type based on extension or animated flag
+                            // Determine type based on extension and animated flag
                             /** @type {'image' | 'video' | 'gif'} */
                             let outputType = 'image';
-                            if (isVideo || hasAnimatedFlag) {
+                            if (isVideo) {
                                 outputType = 'video';
                             } else if (isGif) {
                                 outputType = 'gif';
+                            } else if ((isWebp || ext === 'png') && hasAnimatedFlag) {
+                                // Animated webp/apng treated as video
+                                outputType = 'video';
                             }
                             
                             this.#outputs.push({
@@ -368,11 +389,21 @@ export class OutputsManager {
     }
     
     /**
+     * Add an API event listener and store it for cleanup
+     * @param {string} eventName 
+     * @param {Function} handler 
+     */
+    #addApiListener(eventName, handler) {
+        api.addEventListener(eventName, handler);
+        this.#eventListeners.set(eventName, handler);
+    }
+
+    /**
      * Setup API event listeners
      */
     #setupEventListeners() {
         // Listen for execution events
-        api.addEventListener('executing', (event) => {
+        this.#addApiListener('executing', (event) => {
             const nodeId = event.detail;
             if(nodeId) {
                 this.#isExecuting = true;
@@ -380,20 +411,20 @@ export class OutputsManager {
             }
         });
         
-        api.addEventListener('executed', (event) => {
+        this.#addApiListener('executed', (event) => {
             const { node, output } = event.detail;
             if(output) {
                 this.#handleNodeOutput(node, output);
             }
         });
         
-        api.addEventListener('execution_start', () => {
+        this.#addApiListener('execution_start', () => {
             this.#isExecuting = true;
             this.clearOutputs();
             this.setStatus('Running workflow...');
         });
         
-        api.addEventListener('execution_cached', (event) => {
+        this.#addApiListener('execution_cached', (event) => {
             // Handle cached outputs
             const { nodes } = event.detail;
             if(nodes) {
@@ -403,12 +434,12 @@ export class OutputsManager {
             }
         });
         
-        api.addEventListener('execution_error', (event) => {
+        this.#addApiListener('execution_error', (event) => {
             this.#isExecuting = false;
             this.setStatus('Error: ' + (event.detail?.exception_message || 'Unknown error'));
         });
         
-        api.addEventListener('status', (event) => {
+        this.#addApiListener('status', (event) => {
             const status = event.detail;
             if(status?.exec_info?.queue_remaining === 0 && this.#isExecuting) {
                 this.#isExecuting = false;
@@ -420,7 +451,7 @@ export class OutputsManager {
             }
         });
         
-        api.addEventListener('progress', (event) => {
+        this.#addApiListener('progress', (event) => {
             const { value, max, node } = event.detail;
             if(node && max) {
                 const percent = Math.round((value / max) * 100);
@@ -483,16 +514,22 @@ export class OutputsManager {
                 for(const img of output.images) {
                     const filename = img.filename;
                     const ext = String(filename).toLowerCase().split('.').pop();
-                    const isVideo = ['mp4', 'webm', 'webp', 'mov', 'avi', 'mkv'].includes(ext || '');
+                    // Video extensions (webp excluded - can be static)
+                    const isVideo = ['mp4', 'webm', 'mov', 'avi', 'mkv'].includes(ext || '');
                     const isGif = ext === 'gif';
+                    const isWebp = ext === 'webp';
                     
-                    // Determine type based on extension or animated flag
+                    // Determine type based on extension and animated flag
                     /** @type {'image' | 'video' | 'gif'} */
                     let outputType = 'image';
-                    if (isVideo || hasAnimatedFlag) {
+                    if (isVideo) {
                         outputType = 'video';
                     } else if (isGif) {
+                        // GIFs are treated as gifs (animated images)
                         outputType = 'gif';
+                    } else if ((isWebp || ext === 'png') && hasAnimatedFlag) {
+                        // Animated webp/apng treated as video when animated flag is set
+                        outputType = 'video';
                     }
                     
                     this.#addOutput({
@@ -561,35 +598,18 @@ export class OutputsManager {
                 }
             }
             
-            // Handle animated (videos/gifs from SaveVideo/animated format)
-            // Some nodes use `animated: [true]` as a flag, others use `animated: [{filename, subfolder, type}]`
+            // Handle animated array - ONLY for object-based animated items
+            // Boolean flags in animated array are already handled by hasAnimatedFlag check in images processing
+            // This prevents duplicate processing when animated: [true] + images array both exist
             if(output.animated && Array.isArray(output.animated)) {
                 for(const anim of output.animated) {
-                    // If animated item is a boolean, the actual file is in the images array
+                    // Skip boolean flags - images were already processed with hasAnimatedFlag
                     if (typeof anim === 'boolean') {
-                        // Process images as animated videos/gifs
-                        if (output.images && Array.isArray(output.images)) {
-                            for (const img of output.images) {
-                                const filename = img.filename;
-                                const ext = String(filename).toLowerCase().split('.').pop();
-                                const isVideo = ['mp4', 'webm', 'webp', 'mov', 'avi', 'mkv'].includes(ext || '');
-                                const isGif = ext === 'gif';
-                                
-                                // Only process if it looks like an animated format
-                                if (isVideo || isGif) {
-                                    this.#addOutput({
-                                        type: /** @type {'video' | 'image' | 'gif'} */ (isVideo ? 'video' : 'gif'),
-                                        filename: filename,
-                                        subfolder: img.subfolder || '',
-                                        format: img.type || 'output',
-                                        nodeId: nodeId,
-                                        nodeTitle: nodeTitle
-                                    });
-                                }
-                            }
-                        }
-                        break;
-                    } else if (typeof anim === 'object' && anim.filename) {
+                        continue;
+                    }
+                    
+                    // Handle object-based animated items (actual file references)
+                    if (typeof anim === 'object' && anim.filename) {
                         const filename = anim.filename;
                         const ext = String(filename).toLowerCase().split('.').pop();
                         const isVideo = ['mp4', 'webm', 'mov', 'avi', 'mkv'].includes(ext || '');
@@ -610,10 +630,20 @@ export class OutputsManager {
     }
     
     /**
-     * Add an output item
+     * Add an output item (with deduplication)
      * @param {OutputItem} item 
+     * @returns {boolean} - Whether the item was added (false if duplicate)
      */
     #addOutput(item) {
+        // Check for duplicates - same filename and nodeId means it's the same output
+        const exists = this.#outputs.some(o => 
+            o.filename === item.filename && o.nodeId === item.nodeId
+        );
+        
+        if (exists) {
+            return false;
+        }
+        
         this.#outputs.push(item);
         
         // Store by node
@@ -624,6 +654,7 @@ export class OutputsManager {
         
         this.render();
         this.#onUpdate?.();
+        return true;
     }
     
     /**
@@ -676,30 +707,77 @@ export class OutputsManager {
      * Render the outputs display
      */
     render() {
+        const currentView = localStorage.getItem('mf-outputs-view') || 'grid';
+        
         this.#container.innerHTML = `
             <div class="comfy-mobile-form-outputs-widgets"></div>
             <div class="comfy-mobile-form-outputs-header">
                 <h3>Generated Outputs</h3>
                 <span class="comfy-mobile-form-outputs-status">Ready</span>
-                <button class="comfy-mobile-form-outputs-clear" title="Clear all outputs">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/>
-                        <path d="M10 11v6M14 11v6"/>
-                    </svg>
-                    <span>Clear</span>
-                </button>
+                <div class="comfy-mobile-form-outputs-actions">
+                    <div class="comfy-mobile-form-view-toggle" data-view="${currentView}">
+                        <button class="comfy-mobile-form-view-btn ${currentView === 'grid' ? 'active' : ''}" data-view="grid" title="Grid View">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="3" y="3" width="7" height="7"/>
+                                <rect x="14" y="3" width="7" height="7"/>
+                                <rect x="14" y="14" width="7" height="7"/>
+                                <rect x="3" y="14" width="7" height="7"/>
+                            </svg>
+                        </button>
+                        <button class="comfy-mobile-form-view-btn ${currentView === 'list' ? 'active' : ''}" data-view="list" title="List View">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="8" y1="6" x2="21" y2="6"/>
+                                <line x1="8" y1="12" x2="21" y2="12"/>
+                                <line x1="8" y1="18" x2="21" y2="18"/>
+                                <line x1="3" y1="6" x2="3.01" y2="6"/>
+                                <line x1="3" y1="12" x2="3.01" y2="12"/>
+                                <line x1="3" y1="18" x2="3.01" y2="18"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <button class="comfy-mobile-form-outputs-clear" title="Clear all outputs">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/>
+                            <path d="M10 11v6M14 11v6"/>
+                        </svg>
+                        <span>Clear</span>
+                    </button>
+                </div>
             </div>
             <div class="comfy-mobile-form-outputs-progress-bar">
                 <div class="comfy-mobile-form-outputs-progress"></div>
             </div>
-            <div class="comfy-mobile-form-outputs-gallery"></div>
+            <div class="comfy-mobile-form-outputs-gallery ${currentView === 'list' ? 'list-view' : ''}"></div>
         `;
         
-        // Add clear button handler
+        // View toggle handler
+        const viewToggle = this.#container.querySelector('.comfy-mobile-form-view-toggle');
+        viewToggle?.querySelectorAll('.comfy-mobile-form-view-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const view = btn.getAttribute('data-view') || 'grid';
+                this.#setGalleryView(view);
+            });
+        });
+        
+        // Add clear button handler with confirmation
         const clearBtn = this.#container.querySelector('.comfy-mobile-form-outputs-clear');
-        clearBtn?.addEventListener('click', () => {
-            this.clearOutputs();
-            this.render();
+        clearBtn?.addEventListener('click', async () => {
+            // Only show confirmation if there are outputs to clear
+            if (this.#outputs.length === 0) return;
+            
+            const confirmed = await showConfirmDialog({
+                title: 'Clear All Outputs',
+                message: `Are you sure you want to clear all ${this.#outputs.length} output${this.#outputs.length === 1 ? '' : 's'}? This action cannot be undone.`,
+                confirmText: 'Clear All',
+                cancelText: 'Keep',
+                type: 'danger',
+                icon: '🗑️'
+            });
+            
+            if (confirmed) {
+                this.clearOutputs();
+                this.render();
+            }
         });
         
         // Render output node widgets
@@ -710,7 +788,20 @@ export class OutputsManager {
         if(!gallery) return;
         
         if(this.#outputs.length === 0) {
-            gallery.innerHTML = '<div class="comfy-mobile-form-outputs-empty">No outputs yet. Run a workflow to see results here.</div>';
+            gallery.innerHTML = `
+                <div class="comfy-mobile-form-empty-state">
+                    <div class="comfy-mobile-form-empty-state-icon">🖼️</div>
+                    <div class="comfy-mobile-form-empty-state-title">No Outputs Yet</div>
+                    <div class="comfy-mobile-form-empty-state-description">
+                        Generated images, videos, and other outputs will appear here after running your workflow.
+                    </div>
+                    <div class="comfy-mobile-form-empty-state-hint">
+                        <div class="comfy-mobile-form-empty-state-hint-item">Configure your workflow inputs</div>
+                        <div class="comfy-mobile-form-empty-state-hint-item">Click "Queue Prompt" to run</div>
+                        <div class="comfy-mobile-form-empty-state-hint-item">Results will show here automatically</div>
+                    </div>
+                </div>
+            `;
             return;
         }
         
@@ -821,16 +912,113 @@ export class OutputsManager {
         label.textContent = output.nodeTitle;
         item.appendChild(label);
         
+        // Actions bar
+        const actions = document.createElement('div');
+        actions.classList.add('comfy-mobile-form-output-actions');
+        
+        // Copy button (for images only)
+        if (output.type === 'image' || output.type === 'gif') {
+            const copyBtn = document.createElement('button');
+            copyBtn.classList.add('comfy-mobile-form-output-action');
+            copyBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>`;
+            copyBtn.title = 'Copy to Clipboard';
+            copyBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                await this.#copyToClipboard(url, copyBtn);
+            });
+            actions.appendChild(copyBtn);
+        }
+        
+        // Fullscreen button
+        const fullscreenBtn = document.createElement('button');
+        fullscreenBtn.classList.add('comfy-mobile-form-output-action');
+        fullscreenBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+        </svg>`;
+        fullscreenBtn.title = 'View Fullscreen';
+        fullscreenBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.#showFullscreen(url, output.type === 'video' ? 'video' : 'image');
+        });
+        actions.appendChild(fullscreenBtn);
+        
         // Download button
         const downloadBtn = document.createElement('a');
-        downloadBtn.classList.add('comfy-mobile-form-output-download');
+        downloadBtn.classList.add('comfy-mobile-form-output-action');
         downloadBtn.href = url;
         downloadBtn.download = output.filename;
-        downloadBtn.innerHTML = '⬇';
+        downloadBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>`;
         downloadBtn.title = 'Download';
-        item.appendChild(downloadBtn);
+        downloadBtn.addEventListener('click', (e) => e.stopPropagation());
+        actions.appendChild(downloadBtn);
+        
+        item.appendChild(actions);
         
         return item;
+    }
+
+    /**
+     * Set the gallery view mode
+     * @param {string} view - 'grid' or 'list'
+     */
+    #setGalleryView(view) {
+        localStorage.setItem('mf-outputs-view', view);
+        
+        const gallery = this.#container.querySelector('.comfy-mobile-form-outputs-gallery');
+        const toggle = this.#container.querySelector('.comfy-mobile-form-view-toggle');
+        
+        if (gallery) {
+            gallery.classList.toggle('list-view', view === 'list');
+        }
+        
+        if (toggle) {
+            toggle.setAttribute('data-view', view);
+            toggle.querySelectorAll('.comfy-mobile-form-view-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.getAttribute('data-view') === view);
+            });
+        }
+    }
+
+    /**
+     * Copy image to clipboard
+     * @param {string} url 
+     * @param {HTMLElement} btn 
+     */
+    async #copyToClipboard(url, btn) {
+        try {
+            const response = await fetch(url);
+            const blob = await response.blob();
+            
+            await navigator.clipboard.write([
+                new ClipboardItem({
+                    [blob.type]: blob
+                })
+            ]);
+            
+            // Show feedback
+            btn.classList.add('success');
+            btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="20 6 9 17 4 12"/>
+            </svg>`;
+            setTimeout(() => {
+                btn.classList.remove('success');
+                btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>`;
+            }, 2000);
+        } catch (e) {
+            console.error('[MobileForm] Copy failed:', e);
+            btn.classList.add('error');
+            setTimeout(() => btn.classList.remove('error'), 2000);
+        }
     }
     
     /**

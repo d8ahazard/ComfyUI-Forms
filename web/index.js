@@ -7,7 +7,9 @@ import { api } from "../../scripts/api.js";
 import { MobileFormUI } from "./ui.js";
 import { migrateLocalStorageToWorkflow, getSettingsDebugInfo } from "./widget.js";
 
-const log = console.log.bind(console, "[MobileForm]");
+// Debug logging - set to true for development
+const DEBUG = false;
+const log = DEBUG ? console.log.bind(console, "[MobileForm]") : () => {};
 const error = console.error.bind(console, "[MobileForm]");
 
 const BASE_PATH = import.meta.url.replace(/\/[^/]*$/, "");

@@ -14,6 +14,7 @@ initializeExtensions();
  * @property {string} [height] - "auto", "compact", "medium", "tall"
  * @property {string} [color] - "default", "blue", "green", "purple", "orange", "red"
  * @property {string} [break] - "true" to start a new row before this widget
+ * @property {string} [tooltip] - Custom tooltip/hint text for this widget
  */
 
 /**
@@ -105,7 +106,6 @@ function saveWorkflowSettings(allSettings) {
         }
         
         // Debug log
-        console.log('[MobileForm] Settings saved to workflow:', Object.keys(allSettings).length, 'entries');
     } catch(e) {
         console.warn('[MobileForm] Failed to save workflow settings:', e);
     }
@@ -204,7 +204,6 @@ export function migrateLocalStorageToWorkflow() {
     // Check if workflow already has settings
     const existingSettings = getWorkflowSettings();
     if (Object.keys(existingSettings).length > 1) {
-        console.log('[MobileForm] Workflow already has settings, skipping migration');
         return;
     }
     
@@ -232,7 +231,6 @@ export function migrateLocalStorageToWorkflow() {
         
         if (Object.keys(migratedSettings).length > 0) {
             saveWorkflowSettings(migratedSettings);
-            console.log('[MobileForm] Migrated', Object.keys(migratedSettings).length, 'settings from localStorage to workflow');
         }
     } catch (e) {
         console.warn('[MobileForm] Failed to migrate localStorage settings:', e);
@@ -278,6 +276,111 @@ function applyWidgetSettings(elem, settings) {
     } else {
         elem.dataset.color = settings.color || "default";
     }
+}
+
+/**
+ * Apply tooltip to a widget element
+ * Creates or updates the tooltip indicator and content
+ * @param {HTMLElement} elem 
+ * @param {number} nodeId 
+ * @param {WidgetSettings} settings 
+ */
+async function applyWidgetTooltip(elem, nodeId, settings) {
+    // Get or create tooltip container
+    let tooltipContainer = /** @type {HTMLElement | null} */ (
+        elem.querySelector('.comfy-mobile-form-tooltip-container')
+    );
+    
+    // Get the tooltip text (custom or default)
+    const customTooltip = settings.tooltip;
+    const defaultTooltip = await getNodeDefaultTooltip(nodeId);
+    const tooltipText = customTooltip || defaultTooltip;
+    
+    if (!tooltipText) {
+        // Remove tooltip if no text
+        tooltipContainer?.remove();
+        elem.dataset.hasTooltip = 'false';
+        elem.dataset.hasCustomTooltip = 'false';
+        return;
+    }
+    
+    if (!tooltipContainer) {
+        tooltipContainer = document.createElement('div');
+        tooltipContainer.classList.add('comfy-mobile-form-tooltip-container');
+        
+        // Use SVG icon for cleaner look
+        const tooltipIcon = document.createElement('div');
+        tooltipIcon.classList.add('comfy-mobile-form-tooltip-icon');
+        tooltipIcon.setAttribute('aria-label', 'Show tooltip');
+        tooltipIcon.setAttribute('role', 'button');
+        tooltipIcon.setAttribute('tabindex', '0');
+        tooltipContainer.appendChild(tooltipIcon);
+        
+        // Add tooltip content (shown on hover/click)
+        const tooltipContent = document.createElement('div');
+        tooltipContent.classList.add('comfy-mobile-form-tooltip-content');
+        tooltipContent.setAttribute('role', 'tooltip');
+        tooltipContainer.appendChild(tooltipContent);
+        
+        // Insert at the beginning of the widget (positioned via CSS)
+        elem.insertBefore(tooltipContainer, elem.firstChild);
+        
+        // Touch device support - click to toggle
+        let touchVisible = false;
+        tooltipContainer.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+                touchVisible = !touchVisible;
+                if (touchVisible) {
+                    tooltipContent.style.opacity = '1';
+                    tooltipContent.style.visibility = 'visible';
+                    tooltipContent.style.transform = 'translateY(0)';
+                    tooltipContent.style.pointerEvents = 'auto';
+                } else {
+                    tooltipContent.style.opacity = '';
+                    tooltipContent.style.visibility = '';
+                    tooltipContent.style.transform = '';
+                    tooltipContent.style.pointerEvents = '';
+                }
+            }
+        });
+        
+        // Keyboard support
+        tooltipIcon.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                tooltipContainer?.click();
+            }
+        });
+        
+        // Close tooltip when clicking elsewhere
+        document.addEventListener('click', (e) => {
+            if (touchVisible && !tooltipContainer?.contains(/** @type {Node} */ (e.target))) {
+                touchVisible = false;
+                tooltipContent.style.opacity = '';
+                tooltipContent.style.visibility = '';
+                tooltipContent.style.transform = '';
+                tooltipContent.style.pointerEvents = '';
+            }
+        });
+    }
+    
+    // Update tooltip content
+    const tooltipContent = tooltipContainer.querySelector('.comfy-mobile-form-tooltip-content');
+    if (tooltipContent) {
+        tooltipContent.textContent = tooltipText;
+    }
+    
+    // Update icon based on whether it's custom
+    const tooltipIcon = tooltipContainer.querySelector('.comfy-mobile-form-tooltip-icon');
+    if (tooltipIcon) {
+        // Use simple text characters that render well
+        tooltipIcon.textContent = customTooltip ? '💡' : 'ℹ';
+    }
+    
+    // Mark as having custom tooltip
+    elem.dataset.hasTooltip = 'true';
+    elem.dataset.hasCustomTooltip = customTooltip ? 'true' : 'false';
 }
 
 /**
@@ -395,6 +498,237 @@ async function isNodeBypassed(nodeId) {
 }
 
 /**
+ * Get the default tooltip/description for a node
+ * @param {number} nodeId 
+ * @returns {Promise<string>}
+ */
+async function getNodeDefaultTooltip(nodeId) {
+    // @ts-ignore
+    const { app } = await import("../../scripts/app.js");
+    const node = app.graph.getNodeById(nodeId);
+    
+    if (!node) return '';
+    
+    // Try to get node description from various sources
+    const nodeType = node.type;
+    const nodeTitle = node.title || nodeType;
+    
+    // Try to get description from node definition
+    // @ts-ignore
+    const nodeDefs = app.registerNodesFromDefs?.nodeDefs || LiteGraph?.registered_node_types?.[nodeType];
+    if (nodeDefs?.description) {
+        return nodeDefs.description;
+    }
+    
+    // Try to get from ComfyUI node info
+    try {
+        // @ts-ignore
+        const objectInfo = await app.api?.getNodeDefs?.();
+        if (objectInfo?.[nodeType]?.description) {
+            return objectInfo[nodeType].description;
+        }
+    } catch (e) {
+        // Ignore
+    }
+    
+    // Default: use node title/type
+    return `${nodeTitle} (${nodeType})`;
+}
+
+/**
+ * Escape HTML special characters to prevent XSS and rendering issues
+ * @param {string} text 
+ * @returns {string}
+ */
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+/**
+ * Show tooltip edit dialog
+ * @param {number} nodeId 
+ * @param {string} currentTooltip 
+ * @param {(newTooltip: string) => void} onSave 
+ */
+async function showTooltipEditDialog(nodeId, currentTooltip, onSave) {
+    const defaultTooltip = await getNodeDefaultTooltip(nodeId);
+    const escapedDefault = escapeHtml(defaultTooltip);
+    const escapedCurrent = escapeHtml(currentTooltip || '');
+    
+    // Create dialog overlay
+    const overlay = document.createElement('div');
+    overlay.classList.add('comfy-mobile-form-dialog-overlay');
+    
+    const dialog = document.createElement('div');
+    dialog.classList.add('comfy-mobile-form-dialog');
+    dialog.innerHTML = `
+        <div class="comfy-mobile-form-dialog-header">
+            <h3>Edit Tooltip</h3>
+            <button class="comfy-mobile-form-dialog-close" aria-label="Close dialog">✕</button>
+        </div>
+        <div class="comfy-mobile-form-dialog-body">
+            <label class="comfy-mobile-form-dialog-label">
+                Custom tooltip/hint for this widget:
+            </label>
+            <textarea class="comfy-mobile-form-dialog-textarea" rows="3" placeholder="${escapedDefault}">${escapedCurrent}</textarea>
+            <div class="comfy-mobile-form-dialog-hint">
+                Leave empty to use the default: "${escapedDefault}"
+            </div>
+        </div>
+        <div class="comfy-mobile-form-dialog-footer">
+            <button class="comfy-mobile-form-dialog-btn secondary" data-action="reset">Reset to Default</button>
+            <button class="comfy-mobile-form-dialog-btn secondary" data-action="cancel">Cancel</button>
+            <button class="comfy-mobile-form-dialog-btn primary" data-action="save">Save</button>
+        </div>
+    `;
+    
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+    
+    const textarea = /** @type {HTMLTextAreaElement} */ (dialog.querySelector('textarea'));
+    textarea.focus();
+    textarea.select();
+    
+    // Close handlers
+    const close = () => overlay.remove();
+    
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) close();
+    });
+    
+    dialog.querySelector('.comfy-mobile-form-dialog-close')?.addEventListener('click', close);
+    
+    dialog.querySelector('[data-action="cancel"]')?.addEventListener('click', close);
+    
+    dialog.querySelector('[data-action="reset"]')?.addEventListener('click', () => {
+        textarea.value = '';
+        onSave('');
+        close();
+    });
+    
+    dialog.querySelector('[data-action="save"]')?.addEventListener('click', () => {
+        onSave(textarea.value.trim());
+        close();
+    });
+    
+    // Save on Enter (Ctrl/Cmd+Enter for multiline)
+    textarea.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            onSave(textarea.value.trim());
+            close();
+        } else if (e.key === 'Escape') {
+            close();
+        }
+    });
+}
+
+/**
+ * Show a confirmation dialog
+ * @param {Object} options 
+ * @param {string} options.title - Dialog title
+ * @param {string} options.message - Confirmation message
+ * @param {string} [options.confirmText='Confirm'] - Confirm button text
+ * @param {string} [options.cancelText='Cancel'] - Cancel button text
+ * @param {'danger' | 'warning' | 'info'} [options.type='warning'] - Dialog type for styling
+ * @param {string} [options.icon] - Optional icon emoji
+ * @returns {Promise<boolean>} - Resolves true if confirmed, false if cancelled
+ */
+export function showConfirmDialog(options) {
+    return new Promise((resolve) => {
+        const { 
+            title, 
+            message, 
+            confirmText = 'Confirm', 
+            cancelText = 'Cancel',
+            type = 'warning',
+            icon = type === 'danger' ? '⚠️' : type === 'warning' ? '❓' : 'ℹ️'
+        } = options;
+        
+        // Create dialog overlay
+        const overlay = document.createElement('div');
+        overlay.classList.add('comfy-mobile-form-dialog-overlay');
+        overlay.setAttribute('role', 'dialog');
+        overlay.setAttribute('aria-modal', 'true');
+        overlay.setAttribute('aria-labelledby', 'confirm-dialog-title');
+        
+        const typeClass = `comfy-mobile-form-confirm-${type}`;
+        
+        const dialog = document.createElement('div');
+        dialog.classList.add('comfy-mobile-form-dialog', 'comfy-mobile-form-confirm-dialog', typeClass);
+        dialog.innerHTML = `
+            <div class="comfy-mobile-form-dialog-header">
+                <h3 id="confirm-dialog-title">${icon} ${escapeHtml(title)}</h3>
+                <button class="comfy-mobile-form-dialog-close" aria-label="Close dialog">✕</button>
+            </div>
+            <div class="comfy-mobile-form-dialog-body">
+                <p class="comfy-mobile-form-confirm-message">${escapeHtml(message)}</p>
+            </div>
+            <div class="comfy-mobile-form-dialog-footer">
+                <button class="comfy-mobile-form-dialog-btn secondary" data-action="cancel">${escapeHtml(cancelText)}</button>
+                <button class="comfy-mobile-form-dialog-btn ${type === 'danger' ? 'danger' : 'primary'}" data-action="confirm">${escapeHtml(confirmText)}</button>
+            </div>
+        `;
+        
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+        
+        // Focus trap setup - get focusable elements
+        const focusableElements = dialog.querySelectorAll(
+            'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        );
+        const firstFocusable = /** @type {HTMLElement} */ (focusableElements[0]);
+        const lastFocusable = /** @type {HTMLElement} */ (focusableElements[focusableElements.length - 1]);
+        
+        // Store the element that was focused before opening
+        const previouslyFocused = /** @type {HTMLElement | null} */ (document.activeElement);
+        
+        // Close handlers with focus restoration
+        const closeWithFocus = (confirmed) => {
+            overlay.remove();
+            previouslyFocused?.focus();
+            resolve(confirmed);
+        };
+        
+        // Keyboard support with focus trap
+        dialog.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closeWithFocus(false);
+            } else if (e.key === 'Enter' && e.target === dialog.querySelector('[data-action="confirm"]')) {
+                closeWithFocus(true);
+            } else if (e.key === 'Tab') {
+                // Focus trap
+                if (e.shiftKey) {
+                    if (document.activeElement === firstFocusable) {
+                        e.preventDefault();
+                        lastFocusable?.focus();
+                    }
+                } else {
+                    if (document.activeElement === lastFocusable) {
+                        e.preventDefault();
+                        firstFocusable?.focus();
+                    }
+                }
+            }
+        });
+        
+        // Update close handlers to use focus restoration
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) closeWithFocus(false);
+        });
+        
+        dialog.querySelector('.comfy-mobile-form-dialog-close')?.addEventListener('click', () => closeWithFocus(false));
+        dialog.querySelector('[data-action="cancel"]')?.addEventListener('click', () => closeWithFocus(false));
+        dialog.querySelector('[data-action="confirm"]')?.addEventListener('click', () => closeWithFocus(true));
+        
+        // Focus the cancel button by default (safer choice)
+        const cancelBtn = /** @type {HTMLButtonElement} */ (dialog.querySelector('[data-action="cancel"]'));
+        cancelBtn?.focus();
+    });
+}
+
+/**
  * Show context menu for widget settings
  * @param {HTMLElement} widgetElem 
  * @param {number} nodeId 
@@ -418,6 +752,7 @@ async function showContextMenu(widgetElem, nodeId, x, y) {
     bypassItem.classList.add('comfy-mobile-form-context-menu-item');
     if (bypassed) bypassItem.classList.add('active');
     bypassItem.innerHTML = `<span class="check-icon">${bypassed ? '✓' : ''}</span>Bypass Node`;
+    bypassItem.title = 'Skip this node during execution. The node will be greyed out and its inputs disabled.';
     bypassItem.addEventListener('click', async () => {
         await toggleNodeBypass(nodeId, widgetElem);
         closeContextMenu();
@@ -433,6 +768,7 @@ async function showContextMenu(widgetElem, nodeId, x, y) {
     breakItem.classList.add('comfy-mobile-form-context-menu-item');
     if (settings.break === "true") breakItem.classList.add('active');
     breakItem.innerHTML = `<span class="check-icon">${settings.break === "true" ? '✓' : ''}</span>New Row Before`;
+    breakItem.title = 'Force this widget to start on a new row, even if there\'s room in the previous row.';
     breakItem.addEventListener('click', () => {
         settings.break = settings.break === "true" ? "false" : "true";
         saveWidgetSettings(nodeId, settings);
@@ -447,11 +783,12 @@ async function showContextMenu(widgetElem, nodeId, x, y) {
     widthSection.classList.add('comfy-mobile-form-context-menu-section');
     widthSection.innerHTML = `<div class="comfy-mobile-form-context-menu-label">Width</div>`;
     
+    /** @type {{value: string, label: string, tooltip: string}[]} */
     const widthOptions = [
-        { value: "1", label: "1 Column" },
-        { value: "2", label: "2 Columns" },
-        { value: "3", label: "3 Columns" },
-        { value: "4", label: "Full Row" }
+        { value: "1", label: "1 Column", tooltip: "Widget takes up 1/4 of the row width" },
+        { value: "2", label: "2 Columns", tooltip: "Widget takes up 2/4 (half) of the row width" },
+        { value: "3", label: "3 Columns", tooltip: "Widget takes up 3/4 of the row width" },
+        { value: "4", label: "Full Row", tooltip: "Widget takes up the entire row" }
     ];
     
     for (const opt of widthOptions) {
@@ -459,6 +796,7 @@ async function showContextMenu(widgetElem, nodeId, x, y) {
         item.classList.add('comfy-mobile-form-context-menu-item');
         if (settings.width === opt.value) item.classList.add('active');
         item.innerHTML = `<span class="check-icon">${settings.width === opt.value ? '✓' : ''}</span>${opt.label}`;
+        item.title = opt.tooltip;
         item.addEventListener('click', () => {
             settings.width = opt.value;
             saveWidgetSettings(nodeId, settings);
@@ -474,11 +812,12 @@ async function showContextMenu(widgetElem, nodeId, x, y) {
     heightSection.classList.add('comfy-mobile-form-context-menu-section');
     heightSection.innerHTML = `<div class="comfy-mobile-form-context-menu-label">Height</div>`;
     
+    /** @type {{value: string, label: string, tooltip: string}[]} */
     const heightOptions = [
-        { value: "auto", label: "Auto" },
-        { value: "compact", label: "Compact" },
-        { value: "medium", label: "Medium" },
-        { value: "tall", label: "Tall" }
+        { value: "auto", label: "Auto", tooltip: "Height adjusts to content automatically" },
+        { value: "compact", label: "Compact", tooltip: "Fixed compact height (~80px)" },
+        { value: "medium", label: "Medium", tooltip: "Fixed medium height (~150px)" },
+        { value: "tall", label: "Tall", tooltip: "Fixed tall height (~250px) - ideal for text areas and image previews" }
     ];
     
     for (const opt of heightOptions) {
@@ -486,6 +825,7 @@ async function showContextMenu(widgetElem, nodeId, x, y) {
         item.classList.add('comfy-mobile-form-context-menu-item');
         if (settings.height === opt.value) item.classList.add('active');
         item.innerHTML = `<span class="check-icon">${settings.height === opt.value ? '✓' : ''}</span>${opt.label}`;
+        item.title = opt.tooltip;
         item.addEventListener('click', () => {
             settings.height = opt.value;
             saveWidgetSettings(nodeId, settings);
@@ -528,6 +868,26 @@ async function showContextMenu(widgetElem, nodeId, x, y) {
         colorSection.appendChild(colorsContainer);
         menu.appendChild(colorSection);
     }
+    
+    // Tooltip section
+    const tooltipSection = document.createElement('div');
+    tooltipSection.classList.add('comfy-mobile-form-context-menu-section');
+    
+    const tooltipItem = document.createElement('div');
+    tooltipItem.classList.add('comfy-mobile-form-context-menu-item');
+    const hasCustomTooltip = settings.tooltip && settings.tooltip.length > 0;
+    tooltipItem.innerHTML = `<span class="check-icon">${hasCustomTooltip ? '✓' : '✏️'}</span>Edit Tooltip${hasCustomTooltip ? ' (custom)' : ''}`;
+    tooltipItem.title = 'Set a custom hint/description for this widget';
+    tooltipItem.addEventListener('click', () => {
+        closeContextMenu();
+        showTooltipEditDialog(nodeId, settings.tooltip || '', (newTooltip) => {
+            settings.tooltip = newTooltip;
+            saveWidgetSettings(nodeId, settings);
+            applyWidgetTooltip(widgetElem, nodeId, settings);
+        });
+    });
+    tooltipSection.appendChild(tooltipItem);
+    menu.appendChild(tooltipSection);
     
     // Move section
     const moveSection = document.createElement('div');
@@ -867,6 +1227,9 @@ export function createWidgetFromNode(elem, node) {
             // Extension handlers are responsible for deciding whether to show
             // node.images/node.imgs - don't add them automatically to avoid duplicates
             
+            // Apply tooltip after content is built
+            applyWidgetTooltip(elem, node.id, settings);
+            
             return hasContent;
         } catch (e) {
             console.error(`[MobileForm] Extension handler error for ${node.type}:`, e);
@@ -1058,6 +1421,9 @@ export function createWidgetFromNode(elem, node) {
         addNodeImgsPreview(elem, node);
         hasContent = true;
     }
+    
+    // Apply tooltip after content is built
+    applyWidgetTooltip(elem, node.id, settings);
     
     return hasContent;
 }

@@ -2,6 +2,12 @@
 
 import { createWidgetFromNode, setCurrentGraph, getWidgetOrder, saveWidgetOrder } from "./widget.js";
 import { OutputsManager, getOutputNodeTypes } from "./outputs.js";
+import { 
+    MOBILE_BREAKPOINT, 
+    ROW_THRESHOLD, 
+    PROGRESS_RESET_DELAY,
+    MAX_BATCH_COUNT 
+} from "./constants.js";
 
 /** @import {ComfyUIApp, ComfyUIGraph, ComfyUIGraphGroup, ComfyUIGraphNode} from "./types" */
 
@@ -67,6 +73,16 @@ export class MobileFormUI {
     /** @type {number[]} */
     #currentNodeOrder = [];
 
+    /** Execution tracking for status bar */
+    /** @type {number} */
+    #totalNodes = 0;
+    /** @type {number} */
+    #currentNodeIndex = 0;
+    /** @type {number} */
+    #executionStartTime = 0;
+    /** @type {number[]} */
+    #nodeTimings = [];
+
     /**
      * @param {ComfyUIApp} app 
      * @param {HTMLDivElement} elem 
@@ -94,7 +110,7 @@ export class MobileFormUI {
      */
     #detectMode() {
         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-        const isNarrow = window.innerWidth < 768;
+        const isNarrow = window.innerWidth < MOBILE_BREAKPOINT;
         return (isMobile || isNarrow) ? 'mobile' : 'desktop';
     }
     
@@ -153,12 +169,55 @@ export class MobileFormUI {
             this.#toggleEditMode();
         });
         
+        // Add search bar below header
+        const searchBar = document.createElement('div');
+        searchBar.classList.add('comfy-mobile-form-search');
+        searchBar.innerHTML = `
+            <div class="comfy-mobile-form-search-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"/>
+                    <path d="M21 21l-4.35-4.35"/>
+                </svg>
+            </div>
+            <input type="text" class="comfy-mobile-form-search-input" placeholder="Search widgets..." aria-label="Search widgets">
+            <button class="comfy-mobile-form-search-clear" title="Clear search" style="display: none;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 6L6 18M6 6l12 12"/>
+                </svg>
+            </button>
+        `;
+        
+        const searchInput = /** @type {HTMLInputElement} */ (searchBar.querySelector('.comfy-mobile-form-search-input'));
+        const clearBtn = /** @type {HTMLButtonElement} */ (searchBar.querySelector('.comfy-mobile-form-search-clear'));
+        
+        searchInput.addEventListener('input', () => {
+            const query = searchInput.value.toLowerCase().trim();
+            clearBtn.style.display = query ? 'flex' : 'none';
+            this.#filterWidgets(query);
+        });
+        
+        clearBtn.addEventListener('click', () => {
+            searchInput.value = '';
+            clearBtn.style.display = 'none';
+            this.#filterWidgets('');
+            searchInput.focus();
+        });
+        
+        // Keyboard shortcut: / to focus search
+        document.addEventListener('keydown', (e) => {
+            if (e.key === '/' && this.#visible && !this.#isTypingInInput(e)) {
+                e.preventDefault();
+                searchInput.focus();
+            }
+        });
+        
         // Close button
         this.#header.querySelector('.comfy-mobile-form-close')?.addEventListener('click', () => {
             this.toggleVisible();
         });
         
         this.#elem.appendChild(this.#header);
+        this.#elem.appendChild(searchBar);
         
         // Content area
         const content = document.createElement('div');
@@ -176,11 +235,18 @@ export class MobileFormUI {
         
         this.#elem.appendChild(content);
         
-        // Status bar (visible on all tabs)
+        // Status bar (visible on all tabs) - aria-live for screen readers
         this.#statusBar = document.createElement('div');
         this.#statusBar.classList.add('comfy-mobile-form-status-bar');
+        this.#statusBar.setAttribute('role', 'status');
+        this.#statusBar.setAttribute('aria-live', 'polite');
+        this.#statusBar.setAttribute('aria-atomic', 'true');
         this.#statusBar.innerHTML = `
-            <div class="comfy-mobile-form-status-progress">
+            <div class="comfy-mobile-form-status-info">
+                <span class="comfy-mobile-form-status-node-count" aria-label="Current node"></span>
+                <span class="comfy-mobile-form-status-eta" aria-label="Estimated time remaining"></span>
+            </div>
+            <div class="comfy-mobile-form-status-progress" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
                 <div class="comfy-mobile-form-status-progress-fill"></div>
             </div>
             <div class="comfy-mobile-form-status-text">Ready</div>
@@ -202,6 +268,9 @@ export class MobileFormUI {
         
         // Setup status event listeners
         this.#setupStatusListeners();
+        
+        // Setup keyboard shortcuts
+        this.#setupKeyboardShortcuts();
     }
     
     /**
@@ -209,13 +278,13 @@ export class MobileFormUI {
      */
     #buildActionsBar() {
         this.#actionsContainer.innerHTML = `
-            <button class="comfy-mobile-form-queue-btn" title="Queue Prompt">
+            <button class="comfy-mobile-form-queue-btn" title="Queue Prompt (Q)">
                 <span class="btn-icon">▶</span>
                 <span class="btn-label">Queue</span>
             </button>
-            <button class="comfy-mobile-form-queue-front-btn" title="Queue to Front">
-                <span class="btn-icon">⏫</span>
-                <span class="btn-label">Front</span>
+            <button class="comfy-mobile-form-batch-btn" title="Batch Queue">
+                <span class="btn-icon">📦</span>
+                <span class="btn-label">Batch</span>
             </button>
             <button class="comfy-mobile-form-cancel-btn" title="Cancel Current">
                 <span class="btn-icon">⏹</span>
@@ -228,15 +297,136 @@ export class MobileFormUI {
             await this.#queuePrompt(0);
         });
         
-        // Queue to front
-        this.#actionsContainer.querySelector('.comfy-mobile-form-queue-front-btn')?.addEventListener('click', async () => {
-            await this.#queuePrompt(-1);
+        // Batch queue button
+        this.#actionsContainer.querySelector('.comfy-mobile-form-batch-btn')?.addEventListener('click', () => {
+            this.#showBatchDialog();
         });
         
         // Cancel button
         this.#actionsContainer.querySelector('.comfy-mobile-form-cancel-btn')?.addEventListener('click', async () => {
             await this.#cancelExecution();
         });
+    }
+
+    /**
+     * Show batch queue dialog
+     */
+    #showBatchDialog() {
+        const overlay = document.createElement('div');
+        overlay.classList.add('comfy-mobile-form-dialog-overlay');
+        
+        const dialog = document.createElement('div');
+        dialog.classList.add('comfy-mobile-form-dialog');
+        dialog.innerHTML = `
+            <div class="comfy-mobile-form-dialog-header">
+                <h3>📦 Batch Queue</h3>
+                <button class="comfy-mobile-form-dialog-close" aria-label="Close dialog">✕</button>
+            </div>
+            <div class="comfy-mobile-form-dialog-body">
+                <div class="comfy-mobile-form-batch-field">
+                    <label>Number of runs</label>
+                    <input type="number" class="comfy-mobile-form-batch-count" min="1" max="100" value="4">
+                </div>
+                <div class="comfy-mobile-form-batch-field">
+                    <label>
+                        <input type="checkbox" class="comfy-mobile-form-batch-increment" checked>
+                        Increment seed for each run
+                    </label>
+                </div>
+                <div class="comfy-mobile-form-batch-info">
+                    <small>Each run will be queued separately. If seed increment is enabled, seed widgets will be incremented by 1 for each run.</small>
+                </div>
+            </div>
+            <div class="comfy-mobile-form-dialog-footer">
+                <button class="comfy-mobile-form-dialog-btn secondary" data-action="cancel">Cancel</button>
+                <button class="comfy-mobile-form-dialog-btn primary" data-action="queue">Queue Batch</button>
+            </div>
+        `;
+        
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+        
+        const countInput = /** @type {HTMLInputElement} */ (dialog.querySelector('.comfy-mobile-form-batch-count'));
+        const incrementCheckbox = /** @type {HTMLInputElement} */ (dialog.querySelector('.comfy-mobile-form-batch-increment'));
+        
+        countInput.focus();
+        countInput.select();
+        
+        const close = () => overlay.remove();
+        
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) close();
+        });
+        
+        dialog.querySelector('.comfy-mobile-form-dialog-close')?.addEventListener('click', close);
+        dialog.querySelector('[data-action="cancel"]')?.addEventListener('click', close);
+        
+        dialog.querySelector('[data-action="queue"]')?.addEventListener('click', async () => {
+            const count = parseInt(countInput.value, 10) || 1;
+            const increment = incrementCheckbox.checked;
+            close();
+            await this.#runBatch(count, increment);
+        });
+        
+        // Enter to submit
+        countInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                dialog.querySelector('[data-action="queue"]')?.dispatchEvent(new Event('click'));
+            } else if (e.key === 'Escape') {
+                close();
+            }
+        });
+    }
+
+    /**
+     * Run batch queue
+     * @param {number} count - Number of runs
+     * @param {boolean} incrementSeed - Whether to increment seed
+     */
+    async #runBatch(count, incrementSeed) {
+        // Find all seed widgets in the graph
+        const seedWidgets = [];
+        if (incrementSeed && this.#app.graph?._nodes) {
+            for (const node of this.#app.graph._nodes) {
+                if (node.widgets) {
+                    for (const widget of node.widgets) {
+                        const name = widget.name?.toLowerCase() || '';
+                        if (name === 'seed' || name === 'noise_seed') {
+                            seedWidgets.push(widget);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Store original seeds
+        const originalSeeds = seedWidgets.map(w => w.value);
+        
+        // Queue each run
+        for (let i = 0; i < count; i++) {
+            // Increment seeds if enabled
+            if (incrementSeed) {
+                seedWidgets.forEach((widget, idx) => {
+                    widget.value = originalSeeds[idx] + i;
+                });
+            }
+            
+            try {
+                await this.#app.queuePrompt(0);
+            } catch (e) {
+                console.error(`[MobileForm] Batch run ${i + 1} failed:`, e);
+            }
+        }
+        
+        // Restore original seeds
+        if (incrementSeed) {
+            seedWidgets.forEach((widget, idx) => {
+                widget.value = originalSeeds[idx];
+            });
+        }
+        
+        // Switch to outputs tab
+        this.#switchTab('outputs');
     }
     
     /** @type {string} */
@@ -249,14 +439,29 @@ export class MobileFormUI {
         // Listen for execution events
         api.addEventListener('executing', (event) => {
             const nodeId = event.detail;
-            console.log('[MobileForm] Executing event:', nodeId);
             if(nodeId) {
                 this.#setStatus('executing');
+                
+                // Track timing for previous node
+                if (this.#currentNodeIndex > 0) {
+                    const nodeTime = Date.now() - (this.#nodeTimings[this.#nodeTimings.length - 1] || this.#executionStartTime);
+                    this.#nodeTimings.push(nodeTime);
+                }
+                
+                // Increment node index
+                this.#currentNodeIndex++;
+                
                 // Get node name and store it
                 const node = this.#app.graph?.getNodeById(nodeId);
                 this.#currentNodeName = node?.title || node?.type || `Node ${nodeId}`;
-                console.log('[MobileForm] Executing node:', this.#currentNodeName);
                 this.#setStatusText(`${this.#currentNodeName}`);
+                
+                // Update node count display
+                this.#updateNodeCount();
+                
+                // Update ETA
+                this.#updateETA();
+                
                 // Reset progress for new node
                 this.#setProgress(0);
             }
@@ -267,12 +472,28 @@ export class MobileFormUI {
             this.#setStatusText('Starting workflow...');
             this.#setProgress(0);
             this.#currentNodeName = '';
+            
+            // Initialize execution tracking
+            this.#executionStartTime = Date.now();
+            this.#currentNodeIndex = 0;
+            this.#nodeTimings = [];
+            
+            // Estimate total nodes from graph
+            if (this.#app.graph?._nodes) {
+                this.#totalNodes = this.#app.graph._nodes.length;
+            }
+            
+            this.#updateNodeCount();
+            this.#setETA('');
         });
         
         api.addEventListener('execution_cached', (event) => {
             const { nodes } = event.detail;
             if(nodes?.length) {
+                // Count cached nodes in the total
+                this.#currentNodeIndex += nodes.length;
                 this.#setStatusText(`Cached: ${nodes.length} nodes`);
+                this.#updateNodeCount();
             }
         });
         
@@ -281,34 +502,105 @@ export class MobileFormUI {
             const errorMsg = event.detail?.exception_message || 'Unknown error';
             this.#setStatusText(`Error: ${errorMsg.substring(0, 50)}${errorMsg.length > 50 ? '...' : ''}`);
             this.#setProgress(0);
+            this.#setETA('');
+            this.#setNodeCount('');
         });
         
         api.addEventListener('status', (event) => {
             const status = event.detail;
             if(status?.exec_info?.queue_remaining === 0) {
                 this.#setStatus('ready');
-                this.#setStatusText('✓ Complete');
+                
+                // Calculate total time
+                const totalTime = Date.now() - this.#executionStartTime;
+                const formattedTime = this.#formatTime(totalTime);
+                
+                this.#setStatusText(`✓ Complete in ${formattedTime}`);
                 this.#setProgress(100);
+                this.#setETA('');
+                this.#setNodeCount('');
+                
                 // Reset progress after a delay
                 setTimeout(() => {
                     this.#setProgress(0);
                     this.#setStatusText('Ready');
-                }, 3000);
+                }, PROGRESS_RESET_DELAY);
             }
         });
         
         api.addEventListener('progress', (event) => {
-            console.log('[MobileForm] Progress event:', event.detail);
-            const { value, max, node } = event.detail;
+            const { value, max } = event.detail;
             if(max) {
                 const percent = Math.round((value / max) * 100);
-                console.log('[MobileForm] Setting progress:', percent, '%');
                 this.#setProgress(percent);
                 // Show node name + percentage
                 const nodeName = this.#currentNodeName || 'Processing';
                 this.#setStatusText(`${nodeName} — ${percent}%`);
             }
         });
+    }
+
+    /**
+     * Update the node count display
+     */
+    #updateNodeCount() {
+        if (this.#totalNodes > 0 && this.#currentNodeIndex > 0) {
+            this.#setNodeCount(`Node ${this.#currentNodeIndex}/${this.#totalNodes}`);
+        } else {
+            this.#setNodeCount('');
+        }
+    }
+
+    /**
+     * Update the ETA display based on node timings
+     */
+    #updateETA() {
+        if (this.#nodeTimings.length < 2 || this.#currentNodeIndex >= this.#totalNodes) {
+            this.#setETA('');
+            return;
+        }
+        
+        // Calculate average time per node
+        const avgTime = this.#nodeTimings.reduce((a, b) => a + b, 0) / this.#nodeTimings.length;
+        const remainingNodes = this.#totalNodes - this.#currentNodeIndex;
+        const estimatedRemaining = avgTime * remainingNodes;
+        
+        if (estimatedRemaining > 1000) {
+            this.#setETA(`~${this.#formatTime(estimatedRemaining)} left`);
+        } else {
+            this.#setETA('');
+        }
+    }
+
+    /**
+     * Format milliseconds to human-readable time
+     * @param {number} ms
+     * @returns {string}
+     */
+    #formatTime(ms) {
+        if (ms < 1000) return `${ms}ms`;
+        if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+        const minutes = Math.floor(ms / 60000);
+        const seconds = Math.floor((ms % 60000) / 1000);
+        return `${minutes}m ${seconds}s`;
+    }
+
+    /**
+     * Set the node count display
+     * @param {string} text
+     */
+    #setNodeCount(text) {
+        const countEl = this.#statusBar.querySelector('.comfy-mobile-form-status-node-count');
+        if (countEl) countEl.textContent = text;
+    }
+
+    /**
+     * Set the ETA display
+     * @param {string} text
+     */
+    #setETA(text) {
+        const etaEl = this.#statusBar.querySelector('.comfy-mobile-form-status-eta');
+        if (etaEl) etaEl.textContent = text;
     }
     
     /**
@@ -333,8 +625,90 @@ export class MobileFormUI {
      * @param {number} percent
      */
     #setProgress(percent) {
+        const progressEl = this.#statusBar.querySelector('.comfy-mobile-form-status-progress');
         const fillEl = /** @type {HTMLElement | null} */ (this.#statusBar.querySelector('.comfy-mobile-form-status-progress-fill'));
-        if(fillEl) fillEl.style.width = `${percent}%`;
+        
+        if (fillEl) fillEl.style.width = `${percent}%`;
+        if (progressEl) progressEl.setAttribute('aria-valuenow', String(percent));
+    }
+
+    /**
+     * Setup keyboard shortcuts
+     * - Q: Queue prompt
+     * - Shift+Q: Queue to front
+     * - Escape: Close form / cancel dialogs
+     * - Tab: Switch between Inputs/Outputs (when form is focused)
+     * - E: Toggle edit mode
+     */
+    #setupKeyboardShortcuts() {
+        document.addEventListener('keydown', (e) => {
+            // Only handle shortcuts when form is visible
+            if (!this.#visible) return;
+            
+            // Don't handle shortcuts when typing in inputs
+            const target = /** @type {HTMLElement} */ (e.target);
+            const isTyping = target.tagName === 'INPUT' || 
+                           target.tagName === 'TEXTAREA' || 
+                           target.isContentEditable;
+            
+            // Escape always works (even in inputs - to close dialogs)
+            if (e.key === 'Escape') {
+                // Close any open dialog first
+                const dialog = document.querySelector('.comfy-mobile-form-dialog-overlay');
+                if (dialog) {
+                    dialog.remove();
+                    return;
+                }
+                
+                // Close context menu
+                const contextMenu = document.querySelector('.comfy-mobile-form-context-menu');
+                if (contextMenu) {
+                    contextMenu.remove();
+                    return;
+                }
+                
+                // If editing, exit edit mode
+                if (this.#editMode) {
+                    this.#toggleEditMode();
+                    return;
+                }
+                
+                // Otherwise close the form
+                this.hide();
+                return;
+            }
+            
+            // Other shortcuts don't work when typing
+            if (isTyping) return;
+            
+            // Q - Queue prompt
+            if (e.key === 'q' || e.key === 'Q') {
+                e.preventDefault();
+                if (e.shiftKey) {
+                    // Shift+Q: Queue to front
+                    this.#queuePrompt(-1);
+                } else {
+                    // Q: Normal queue
+                    this.#queuePrompt(0);
+                }
+                return;
+            }
+            
+            // Tab - Switch tabs (only when form element is focused)
+            if (e.key === 'Tab' && this.#elem.contains(document.activeElement)) {
+                e.preventDefault();
+                const newTab = this.#activeTab === 'inputs' ? 'outputs' : 'inputs';
+                this.#switchTab(newTab);
+                return;
+            }
+            
+            // E - Toggle edit mode
+            if (e.key === 'e' || e.key === 'E') {
+                e.preventDefault();
+                this.#toggleEditMode();
+                return;
+            }
+        });
     }
     
     /**
@@ -374,6 +748,87 @@ export class MobileFormUI {
         } catch(e) {
             console.error('[MobileForm] Cancel error:', e);
         }
+    }
+
+    /**
+     * Check if user is typing in an input field
+     * @param {KeyboardEvent} e
+     * @returns {boolean}
+     */
+    #isTypingInInput(e) {
+        const target = /** @type {HTMLElement} */ (e.target);
+        return target.tagName === 'INPUT' || 
+               target.tagName === 'TEXTAREA' || 
+               target.isContentEditable;
+    }
+
+    /**
+     * Filter widgets by search query
+     * @param {string} query
+     */
+    #filterWidgets(query) {
+        const widgets = this.#inputsContainer.querySelectorAll('.comfy-mobile-form-widget');
+        const sections = this.#inputsContainer.querySelectorAll('.comfy-mobile-form-section');
+        
+        let matchCount = 0;
+        
+        widgets.forEach(widget => {
+            const title = widget.querySelector('.comfy-mobile-form-widget-title')?.textContent?.toLowerCase() || '';
+            const nodeType = widget.getAttribute('data-node-type')?.toLowerCase() || '';
+            
+            const matches = !query || title.includes(query) || nodeType.includes(query);
+            
+            if (matches) {
+                widget.classList.remove('comfy-mobile-form-hidden');
+                widget.classList.add('comfy-mobile-form-search-match');
+                matchCount++;
+            } else {
+                widget.classList.add('comfy-mobile-form-hidden');
+                widget.classList.remove('comfy-mobile-form-search-match');
+            }
+        });
+        
+        // Update section visibility based on whether they have visible widgets
+        sections.forEach(section => {
+            const visibleWidgets = section.querySelectorAll('.comfy-mobile-form-widget:not(.comfy-mobile-form-hidden)');
+            if (visibleWidgets.length === 0 && query) {
+                section.classList.add('comfy-mobile-form-hidden');
+            } else {
+                section.classList.remove('comfy-mobile-form-hidden');
+            }
+        });
+        
+        // Show/hide "no results" message
+        let noResultsEl = this.#inputsContainer.querySelector('.comfy-mobile-form-no-results');
+        if (matchCount === 0 && query) {
+            if (!noResultsEl) {
+                noResultsEl = document.createElement('div');
+                noResultsEl.classList.add('comfy-mobile-form-no-results');
+                noResultsEl.innerHTML = `
+                    <div class="comfy-mobile-form-empty-state">
+                        <div class="comfy-mobile-form-empty-state-icon">🔍</div>
+                        <div class="comfy-mobile-form-empty-state-title">No matching widgets</div>
+                        <div class="comfy-mobile-form-empty-state-description">
+                            No widgets match "<strong>${this.#escapeHtml(query)}</strong>"
+                        </div>
+                    </div>
+                `;
+                this.#inputsContainer.appendChild(noResultsEl);
+            }
+        } else if (noResultsEl) {
+            noResultsEl.remove();
+        }
+    }
+
+    /**
+     * Escape HTML for safe display
+     * @param {string} text
+     * @returns {string}
+     */
+    #escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
     
     /**
@@ -685,9 +1140,17 @@ export class MobileFormUI {
             this.#renderInputs(inputNodes, sections, ungroupedNodes);
         } else {
             this.#inputsContainer.innerHTML = `
-                <div class="comfy-mobile-form-empty">
-                    <p>No input group found.</p>
-                    <p>Create a group named <strong>"Mobile Form"</strong> or <strong>"Mobile UI"</strong> and place your input nodes inside it.</p>
+                <div class="comfy-mobile-form-empty-state">
+                    <div class="comfy-mobile-form-empty-state-icon">📋</div>
+                    <div class="comfy-mobile-form-empty-state-title">No Form Group Found</div>
+                    <div class="comfy-mobile-form-empty-state-description">
+                        Create a group in your workflow to define which nodes appear in the form.
+                    </div>
+                    <div class="comfy-mobile-form-empty-state-hint">
+                        <div class="comfy-mobile-form-empty-state-hint-item">Right-click on canvas → Add Group</div>
+                        <div class="comfy-mobile-form-empty-state-hint-item">Name it <strong style="color: var(--mf-accent)">"Mobile Form"</strong></div>
+                        <div class="comfy-mobile-form-empty-state-hint-item">Place your input nodes inside</div>
+                    </div>
                 </div>
             `;
         }
@@ -726,9 +1189,17 @@ export class MobileFormUI {
         
         if(allNodes.length === 0) {
             this.#inputsContainer.innerHTML = `
-                <div class="comfy-mobile-form-empty">
-                    <p>No nodes in the Mobile Form group.</p>
-                    <p>Add nodes like primitives, KSampler, etc. to the group.</p>
+                <div class="comfy-mobile-form-empty-state">
+                    <div class="comfy-mobile-form-empty-state-icon">🔧</div>
+                    <div class="comfy-mobile-form-empty-state-title">Empty Form Group</div>
+                    <div class="comfy-mobile-form-empty-state-description">
+                        Add nodes to your "Mobile Form" group to create form inputs.
+                    </div>
+                    <div class="comfy-mobile-form-empty-state-hint">
+                        <div class="comfy-mobile-form-empty-state-hint-item">Primitives (numbers, text, etc.)</div>
+                        <div class="comfy-mobile-form-empty-state-hint-item">Load Image / Load Video nodes</div>
+                        <div class="comfy-mobile-form-empty-state-hint-item">KSampler and other processing nodes</div>
+                    </div>
                 </div>
             `;
             return;
