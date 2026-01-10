@@ -2,6 +2,827 @@
 
 /** @import {ComfyUIGraphNode, ComfyUIGraphWidget} from "./types" */
 
+// Import extension system
+import { ExtensionRegistry, initializeExtensions } from './extensions/index.js';
+
+// Initialize extensions when module loads
+initializeExtensions();
+
+/**
+ * @typedef {Object} WidgetSettings
+ * @property {string} [width] - Column span: "1", "2", "3", "4"
+ * @property {string} [height] - "auto", "compact", "medium", "tall"
+ * @property {string} [color] - "default", "blue", "green", "purple", "orange", "red"
+ * @property {string} [break] - "true" to start a new row before this widget
+ */
+
+/**
+ * @typedef {Object.<string, WidgetSettings | number[]>} AllWidgetSettings
+ */
+
+/** @type {HTMLDivElement | null} */
+let activeContextMenu = null;
+
+/** @type {any} */
+let currentGraph = null;
+
+/**
+ * Set the current graph reference for workflow-based settings
+ * @param {any} graph 
+ */
+export function setCurrentGraph(graph) {
+    currentGraph = graph;
+}
+
+/**
+ * Find the MobileFormSettings node in the graph
+ * @returns {ComfyUIGraphNode | null}
+ */
+function findSettingsNode() {
+    if (!currentGraph || !currentGraph._nodes) return null;
+    return currentGraph._nodes.find(n => n.type === 'MobileFormSettings') || null;
+}
+
+/**
+ * Get all widget settings from the MobileFormSettings node
+ * @returns {AllWidgetSettings}
+ */
+function getWorkflowSettings() {
+    const settingsNode = findSettingsNode();
+    if (!settingsNode) return {};
+    
+    try {
+        // Try getting from the widget first (live value)
+        if (settingsNode.widgets) {
+            const widget = settingsNode.widgets.find(w => w.name === 'settings_json');
+            if (widget && widget.value && typeof widget.value === 'string' && widget.value !== '{}') {
+                return JSON.parse(widget.value);
+            }
+        }
+        
+        // Fall back to widgets_values (saved value)
+        if (settingsNode.widgets_values && settingsNode.widgets_values[0]) {
+            const json = settingsNode.widgets_values[0];
+            if (typeof json === 'string' && json !== '{}') {
+                return JSON.parse(json);
+            }
+        }
+    } catch(e) {
+        console.warn('[MobileForm] Failed to parse workflow settings:', e);
+    }
+    return {};
+}
+
+/**
+ * Save all widget settings to the MobileFormSettings node
+ * @param {AllWidgetSettings} allSettings 
+ */
+function saveWorkflowSettings(allSettings) {
+    const settingsNode = findSettingsNode();
+    if (!settingsNode) return;
+    
+    try {
+        const json = JSON.stringify(allSettings, null, 0); // Compact JSON
+        
+        // Update the widget value (this is what gets serialized)
+        if (settingsNode.widgets) {
+            const widget = settingsNode.widgets.find(w => w.name === 'settings_json');
+            if (widget) {
+                widget.value = json;
+            }
+        }
+        
+        // Also update widgets_values array for direct serialization
+        if (!settingsNode.widgets_values) {
+            settingsNode.widgets_values = [json];
+        } else {
+            settingsNode.widgets_values[0] = json;
+        }
+        
+        // Mark graph as changed so it saves
+        if (currentGraph && currentGraph.change) {
+            currentGraph.change();
+        }
+        
+        // Debug log
+        console.log('[MobileForm] Settings saved to workflow:', Object.keys(allSettings).length, 'entries');
+    } catch(e) {
+        console.warn('[MobileForm] Failed to save workflow settings:', e);
+    }
+}
+
+/**
+ * Get widget settings - tries workflow node first, then localStorage
+ * @param {number} nodeId 
+ * @returns {WidgetSettings}
+ */
+export function getWidgetSettings(nodeId) {
+    const defaults = { width: "1", height: "auto", color: "default", break: "false" };
+    
+    // Try workflow settings first
+    const workflowSettings = getWorkflowSettings();
+    if (workflowSettings[nodeId]) {
+        return { ...defaults, ...workflowSettings[nodeId] };
+    }
+    
+    // Fall back to localStorage
+    try {
+        const stored = localStorage.getItem(`MobileForm.widgetSettings.${nodeId}`);
+        if (stored) return { ...defaults, ...JSON.parse(stored) };
+    } catch(e) {}
+    
+    return defaults;
+}
+
+/**
+ * Save widget settings - saves to workflow node if present, and localStorage
+ * @param {number} nodeId 
+ * @param {WidgetSettings} settings 
+ */
+export function saveWidgetSettings(nodeId, settings) {
+    // Always save to localStorage as backup
+    try {
+        localStorage.setItem(`MobileForm.widgetSettings.${nodeId}`, JSON.stringify(settings));
+    } catch(e) {}
+    
+    // Save to workflow node if present
+    const settingsNode = findSettingsNode();
+    if (settingsNode) {
+        const allSettings = getWorkflowSettings();
+        allSettings[nodeId] = settings;
+        saveWorkflowSettings(allSettings);
+    }
+}
+
+/**
+ * Get the saved widget order
+ * @returns {number[]}
+ */
+export function getWidgetOrder() {
+    // Try workflow settings first
+    const workflowSettings = getWorkflowSettings();
+    if (workflowSettings._order && Array.isArray(workflowSettings._order)) {
+        return workflowSettings._order;
+    }
+    
+    // Fall back to localStorage
+    try {
+        const stored = localStorage.getItem('MobileForm.widgetOrder');
+        if (stored) return JSON.parse(stored);
+    } catch(e) {}
+    
+    return [];
+}
+
+/**
+ * Save the widget order
+ * @param {number[]} order - Array of node IDs in display order
+ */
+export function saveWidgetOrder(order) {
+    // Always save to localStorage as backup
+    try {
+        localStorage.setItem('MobileForm.widgetOrder', JSON.stringify(order));
+    } catch(e) {}
+    
+    // Save to workflow node if present
+    const settingsNode = findSettingsNode();
+    if (settingsNode) {
+        const allSettings = getWorkflowSettings();
+        allSettings._order = order;
+        saveWorkflowSettings(allSettings);
+    }
+}
+
+/**
+ * Migrate localStorage settings to the workflow node
+ * Called when a MobileFormSettings node is first found in the workflow
+ */
+export function migrateLocalStorageToWorkflow() {
+    const settingsNode = findSettingsNode();
+    if (!settingsNode) return;
+    
+    // Check if workflow already has settings
+    const existingSettings = getWorkflowSettings();
+    if (Object.keys(existingSettings).length > 1) {
+        console.log('[MobileForm] Workflow already has settings, skipping migration');
+        return;
+    }
+    
+    // Collect all localStorage settings
+    const migratedSettings = {};
+    
+    try {
+        // Get widget order
+        const orderJson = localStorage.getItem('MobileForm.widgetOrder');
+        if (orderJson) {
+            migratedSettings._order = JSON.parse(orderJson);
+        }
+        
+        // Find all widget settings keys
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith('MobileForm.widgetSettings.')) {
+                const nodeId = key.replace('MobileForm.widgetSettings.', '');
+                const value = localStorage.getItem(key);
+                if (value) {
+                    migratedSettings[nodeId] = JSON.parse(value);
+                }
+            }
+        }
+        
+        if (Object.keys(migratedSettings).length > 0) {
+            saveWorkflowSettings(migratedSettings);
+            console.log('[MobileForm] Migrated', Object.keys(migratedSettings).length, 'settings from localStorage to workflow');
+        }
+    } catch (e) {
+        console.warn('[MobileForm] Failed to migrate localStorage settings:', e);
+    }
+}
+
+/**
+ * Get debug info about current settings state
+ * @returns {{localStorage: number, workflow: number, hasNode: boolean}}
+ */
+export function getSettingsDebugInfo() {
+    let localStorageCount = 0;
+    for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('MobileForm.')) {
+            localStorageCount++;
+        }
+    }
+    
+    const workflowSettings = getWorkflowSettings();
+    
+    return {
+        localStorage: localStorageCount,
+        workflow: Object.keys(workflowSettings).length,
+        hasNode: !!findSettingsNode()
+    };
+}
+
+/**
+ * Apply widget settings to element
+ * @param {HTMLElement} elem 
+ * @param {WidgetSettings} settings 
+ */
+function applyWidgetSettings(elem, settings) {
+    elem.dataset.width = settings.width || "1";
+    elem.dataset.height = settings.height || "auto";
+    elem.dataset.break = settings.break || "false";
+    
+    // If widget is in a section, always use the section color
+    // Otherwise, use the saved color setting
+    if (elem.dataset.inSection === "true" && elem.dataset.sectionColor) {
+        elem.dataset.color = elem.dataset.sectionColor;
+    } else {
+        elem.dataset.color = settings.color || "default";
+    }
+}
+
+/**
+ * Move a widget in the order
+ * @param {HTMLElement} widgetElem - The widget element to move
+ * @param {number} nodeId - The node ID of the widget
+ * @param {'top' | 'up' | 'down' | 'bottom'} action - The move action
+ */
+function moveWidget(widgetElem, nodeId, action) {
+    const container = widgetElem.parentElement;
+    if (!container) return;
+    
+    // Get all widgets in current DOM order
+    const widgets = Array.from(container.querySelectorAll('.comfy-mobile-form-widget'));
+    const currentIndex = widgets.indexOf(widgetElem);
+    
+    if (currentIndex === -1) return;
+    
+    let newIndex;
+    switch (action) {
+        case 'top':
+            newIndex = 0;
+            break;
+        case 'up':
+            newIndex = Math.max(0, currentIndex - 1);
+            break;
+        case 'down':
+            newIndex = Math.min(widgets.length - 1, currentIndex + 1);
+            break;
+        case 'bottom':
+            newIndex = widgets.length - 1;
+            break;
+        default:
+            return;
+    }
+    
+    // Don't do anything if position doesn't change
+    if (newIndex === currentIndex) return;
+    
+    // Move the element in the DOM
+    if (newIndex === 0) {
+        container.insertBefore(widgetElem, widgets[0]);
+    } else if (newIndex >= widgets.length - 1) {
+        container.appendChild(widgetElem);
+    } else if (newIndex < currentIndex) {
+        container.insertBefore(widgetElem, widgets[newIndex]);
+    } else {
+        // Moving down - insert after the target
+        const targetWidget = widgets[newIndex];
+        if (targetWidget.nextSibling) {
+            container.insertBefore(widgetElem, targetWidget.nextSibling);
+        } else {
+            container.appendChild(widgetElem);
+        }
+    }
+    
+    // Update and save the new order
+    const newOrder = Array.from(container.querySelectorAll('.comfy-mobile-form-widget'))
+        .map(w => parseInt(/** @type {HTMLElement} */(w).dataset.nodeId || '0', 10))
+        .filter(id => id > 0);
+    
+    saveWidgetOrder(newOrder);
+}
+
+/**
+ * Close any open context menu
+ */
+function closeContextMenu() {
+    if (activeContextMenu) {
+        activeContextMenu.remove();
+        activeContextMenu = null;
+    }
+}
+
+/**
+ * Toggle bypass state on a node
+ * @param {number} nodeId 
+ * @param {HTMLElement} widgetElem
+ * @returns {Promise<boolean>} - New bypass state
+ */
+async function toggleNodeBypass(nodeId, widgetElem) {
+    // @ts-ignore
+    const { app } = await import("../../scripts/app.js");
+    const node = app.graph.getNodeById(nodeId);
+    
+    if (!node) return false;
+    
+    // mode = 0 is active, mode = 4 is bypassed
+    const isBypassed = node.mode === 4;
+    node.mode = isBypassed ? 0 : 4;
+    
+    // Update widget appearance
+    if (node.mode === 4) {
+        widgetElem.classList.add('bypassed');
+    } else {
+        widgetElem.classList.remove('bypassed');
+    }
+    
+    // Trigger graph change to update the canvas
+    app.graph.setDirtyCanvas(true, true);
+    
+    return node.mode === 4;
+}
+
+/**
+ * Check if a node is bypassed
+ * @param {number} nodeId 
+ * @returns {Promise<boolean>}
+ */
+async function isNodeBypassed(nodeId) {
+    // @ts-ignore
+    const { app } = await import("../../scripts/app.js");
+    const node = app.graph.getNodeById(nodeId);
+    return node?.mode === 4;
+}
+
+/**
+ * Show context menu for widget settings
+ * @param {HTMLElement} widgetElem 
+ * @param {number} nodeId 
+ * @param {number} x 
+ * @param {number} y 
+ */
+async function showContextMenu(widgetElem, nodeId, x, y) {
+    closeContextMenu();
+    
+    const settings = getWidgetSettings(nodeId);
+    const bypassed = await isNodeBypassed(nodeId);
+    
+    const menu = document.createElement('div');
+    menu.classList.add('comfy-mobile-form-context-menu');
+    
+    // Bypass toggle section
+    const bypassSection = document.createElement('div');
+    bypassSection.classList.add('comfy-mobile-form-context-menu-section');
+    
+    const bypassItem = document.createElement('div');
+    bypassItem.classList.add('comfy-mobile-form-context-menu-item');
+    if (bypassed) bypassItem.classList.add('active');
+    bypassItem.innerHTML = `<span class="check-icon">${bypassed ? '✓' : ''}</span>Bypass Node`;
+    bypassItem.addEventListener('click', async () => {
+        await toggleNodeBypass(nodeId, widgetElem);
+        closeContextMenu();
+    });
+    bypassSection.appendChild(bypassItem);
+    menu.appendChild(bypassSection);
+    
+    // Row break toggle section
+    const breakSection = document.createElement('div');
+    breakSection.classList.add('comfy-mobile-form-context-menu-section');
+    
+    const breakItem = document.createElement('div');
+    breakItem.classList.add('comfy-mobile-form-context-menu-item');
+    if (settings.break === "true") breakItem.classList.add('active');
+    breakItem.innerHTML = `<span class="check-icon">${settings.break === "true" ? '✓' : ''}</span>New Row Before`;
+    breakItem.addEventListener('click', () => {
+        settings.break = settings.break === "true" ? "false" : "true";
+        saveWidgetSettings(nodeId, settings);
+        applyWidgetSettings(widgetElem, settings);
+        closeContextMenu();
+    });
+    breakSection.appendChild(breakItem);
+    menu.appendChild(breakSection);
+    
+    // Width section
+    const widthSection = document.createElement('div');
+    widthSection.classList.add('comfy-mobile-form-context-menu-section');
+    widthSection.innerHTML = `<div class="comfy-mobile-form-context-menu-label">Width</div>`;
+    
+    const widthOptions = [
+        { value: "1", label: "1 Column" },
+        { value: "2", label: "2 Columns" },
+        { value: "3", label: "3 Columns" },
+        { value: "4", label: "Full Row" }
+    ];
+    
+    for (const opt of widthOptions) {
+        const item = document.createElement('div');
+        item.classList.add('comfy-mobile-form-context-menu-item');
+        if (settings.width === opt.value) item.classList.add('active');
+        item.innerHTML = `<span class="check-icon">${settings.width === opt.value ? '✓' : ''}</span>${opt.label}`;
+        item.addEventListener('click', () => {
+            settings.width = opt.value;
+            saveWidgetSettings(nodeId, settings);
+            applyWidgetSettings(widgetElem, settings);
+            closeContextMenu();
+        });
+        widthSection.appendChild(item);
+    }
+    menu.appendChild(widthSection);
+    
+    // Height section
+    const heightSection = document.createElement('div');
+    heightSection.classList.add('comfy-mobile-form-context-menu-section');
+    heightSection.innerHTML = `<div class="comfy-mobile-form-context-menu-label">Height</div>`;
+    
+    const heightOptions = [
+        { value: "auto", label: "Auto" },
+        { value: "compact", label: "Compact" },
+        { value: "medium", label: "Medium" },
+        { value: "tall", label: "Tall" }
+    ];
+    
+    for (const opt of heightOptions) {
+        const item = document.createElement('div');
+        item.classList.add('comfy-mobile-form-context-menu-item');
+        if (settings.height === opt.value) item.classList.add('active');
+        item.innerHTML = `<span class="check-icon">${settings.height === opt.value ? '✓' : ''}</span>${opt.label}`;
+        item.addEventListener('click', () => {
+            settings.height = opt.value;
+            saveWidgetSettings(nodeId, settings);
+            applyWidgetSettings(widgetElem, settings);
+            closeContextMenu();
+        });
+        heightSection.appendChild(item);
+    }
+    menu.appendChild(heightSection);
+    
+    // Color section - only show if widget is NOT in a section (section controls color)
+    if (widgetElem.dataset.inSection !== "true") {
+        const colorSection = document.createElement('div');
+        colorSection.classList.add('comfy-mobile-form-context-menu-section');
+        colorSection.innerHTML = `<div class="comfy-mobile-form-context-menu-label">Color</div>`;
+        
+        const colorsContainer = document.createElement('div');
+        colorsContainer.classList.add('comfy-mobile-form-context-menu-colors');
+        
+        const colors = [
+            "default", 
+            "red", "orange", "amber", "yellow", "lime", 
+            "green", "emerald", "teal", "cyan", "sky", 
+            "blue", "indigo", "violet", "purple", "fuchsia", 
+            "pink", "rose", "slate", "zinc", "white"
+        ];
+        for (const color of colors) {
+            const swatch = document.createElement('div');
+            swatch.classList.add('comfy-mobile-form-color-swatch');
+            swatch.dataset.color = color;
+            if (settings.color === color) swatch.classList.add('active');
+            swatch.addEventListener('click', () => {
+                settings.color = color;
+                saveWidgetSettings(nodeId, settings);
+                applyWidgetSettings(widgetElem, settings);
+                closeContextMenu();
+            });
+            colorsContainer.appendChild(swatch);
+        }
+        colorSection.appendChild(colorsContainer);
+        menu.appendChild(colorSection);
+    }
+    
+    // Move section
+    const moveSection = document.createElement('div');
+    moveSection.classList.add('comfy-mobile-form-context-menu-section');
+    moveSection.innerHTML = `<div class="comfy-mobile-form-context-menu-label">Move</div>`;
+    
+    /** @type {{action: 'top' | 'up' | 'down' | 'bottom', label: string, icon: string}[]} */
+    const moveOptions = [
+        { action: "top", label: "⇈ Move to Top", icon: "⇈" },
+        { action: "up", label: "↑ Move Up", icon: "↑" },
+        { action: "down", label: "↓ Move Down", icon: "↓" },
+        { action: "bottom", label: "⇊ Move to Bottom", icon: "⇊" }
+    ];
+    
+    for (const opt of moveOptions) {
+        const item = document.createElement('div');
+        item.classList.add('comfy-mobile-form-context-menu-item');
+        item.innerHTML = `<span class="check-icon">${opt.icon}</span>${opt.label.substring(2)}`;
+        item.addEventListener('click', () => {
+            moveWidget(widgetElem, nodeId, opt.action);
+            closeContextMenu();
+        });
+        moveSection.appendChild(item);
+    }
+    menu.appendChild(moveSection);
+    
+    // Position menu
+    document.body.appendChild(menu);
+    
+    // Adjust position to stay in viewport
+    const rect = menu.getBoundingClientRect();
+    if (x + rect.width > window.innerWidth) {
+        x = window.innerWidth - rect.width - 10;
+    }
+    if (y + rect.height > window.innerHeight) {
+        y = window.innerHeight - rect.height - 10;
+    }
+    
+    menu.style.left = `${x}px`;
+    menu.style.top = `${y}px`;
+    
+    activeContextMenu = menu;
+    
+    // Close on click outside
+    const closeHandler = (e) => {
+        if (!menu.contains(e.target)) {
+            closeContextMenu();
+            document.removeEventListener('click', closeHandler);
+        }
+    };
+    setTimeout(() => document.addEventListener('click', closeHandler), 0);
+}
+
+/**
+ * Add edit dot to widget
+ * @param {HTMLElement} elem 
+ * @param {number} nodeId 
+ */
+function addEditDot(elem, nodeId) {
+    const dot = document.createElement('div');
+    dot.classList.add('comfy-mobile-form-widget-edit-dot');
+    dot.title = 'Edit widget settings';
+    
+    dot.addEventListener('click', (e) => {
+        e.stopPropagation();
+        showContextMenu(elem, nodeId, e.clientX, e.clientY);
+    });
+    
+    elem.appendChild(dot);
+}
+
+/**
+ * Add preview for a loaded image (from input or output folder)
+ * Returns an update function to change the preview image
+ * @param {HTMLElement} elem 
+ * @param {string} filename - The filename (may include subfolder like "subfolder/image.png")
+ * @param {string} type - "input" or "output"
+ * @param {ComfyUIGraphNode} node
+ * @returns {(newFilename: string) => void} Function to update the preview
+ */
+function addLoadedImagePreview(elem, filename, type, node) {
+    const previewContainer = document.createElement('div');
+    previewContainer.classList.add('comfy-mobile-form-node-preview', 'comfy-mobile-form-loaded-preview');
+    
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    
+    // Click for fullscreen
+    img.addEventListener('click', () => {
+        showFullscreenImage(img.src);
+    });
+    
+    // Handle load errors
+    img.addEventListener('error', () => {
+        img.style.display = 'none';
+    });
+    
+    // Handle load success - show image
+    img.addEventListener('load', () => {
+        img.style.display = '';
+    });
+    
+    previewContainer.appendChild(img);
+    elem.appendChild(previewContainer);
+    
+    // Function to update the preview
+    const updatePreview = (newFilename) => {
+        if (!newFilename) {
+            img.style.display = 'none';
+            return;
+        }
+        
+        // Parse filename - could be "subfolder/filename.png" or just "filename.png"
+        let subfolder = '';
+        let actualFilename = newFilename;
+        
+        if(newFilename.includes('/')) {
+            const lastSlash = newFilename.lastIndexOf('/');
+            subfolder = newFilename.substring(0, lastSlash);
+            actualFilename = newFilename.substring(lastSlash + 1);
+        }
+        
+        const params = new URLSearchParams({
+            filename: actualFilename,
+            subfolder: subfolder,
+            type: type
+        });
+        img.src = `/view?${params.toString()}`;
+        img.alt = newFilename;
+    };
+    
+    // Set initial image
+    updatePreview(filename);
+    
+    return updatePreview;
+}
+
+/**
+ * Add preview for a loaded video (from input or output folder)
+ * Returns an update function to change the preview video
+ * @param {HTMLElement} elem 
+ * @param {string} filename 
+ * @param {string} type 
+ * @param {ComfyUIGraphNode} node
+ * @returns {(newFilename: string) => void} Function to update the preview
+ */
+function addLoadedVideoPreview(elem, filename, type, node) {
+    const previewContainer = document.createElement('div');
+    previewContainer.classList.add('comfy-mobile-form-node-preview', 'comfy-mobile-form-loaded-preview');
+    
+    const video = document.createElement('video');
+    video.controls = true;
+    video.muted = true;
+    video.loop = true;
+    video.playsInline = true;
+    video.preload = 'metadata';
+    
+    // Handle load errors
+    video.addEventListener('error', () => {
+        video.style.display = 'none';
+    });
+    
+    // Handle load success
+    video.addEventListener('loadedmetadata', () => {
+        video.style.display = '';
+    });
+    
+    previewContainer.appendChild(video);
+    elem.appendChild(previewContainer);
+    
+    // Function to update the preview
+    const updatePreview = (newFilename) => {
+        if (!newFilename) {
+            video.style.display = 'none';
+            return;
+        }
+        
+        // Parse filename
+        let subfolder = '';
+        let actualFilename = newFilename;
+        
+        if(newFilename.includes('/')) {
+            const lastSlash = newFilename.lastIndexOf('/');
+            subfolder = newFilename.substring(0, lastSlash);
+            actualFilename = newFilename.substring(lastSlash + 1);
+        }
+        
+        const params = new URLSearchParams({
+            filename: actualFilename,
+            subfolder: subfolder,
+            type: type
+        });
+        video.src = `/view?${params.toString()}`;
+    };
+    
+    // Set initial video
+    updatePreview(filename);
+    
+    return updatePreview;
+}
+
+/**
+ * Add preview images from node.images to the widget
+ * @param {HTMLElement} elem 
+ * @param {ComfyUIGraphNode} node 
+ */
+function addNodeImagePreview(elem, node) {
+    if (!node.images || !Array.isArray(node.images) || node.images.length === 0) return;
+    
+    const previewContainer = document.createElement('div');
+    previewContainer.classList.add('comfy-mobile-form-node-preview');
+    
+    for (const imgData of node.images) {
+        const img = document.createElement('img');
+        const params = new URLSearchParams({
+            filename: imgData.filename,
+            subfolder: imgData.subfolder || '',
+            type: imgData.type || 'output'
+        });
+        img.src = `/view?${params.toString()}`;
+        img.alt = imgData.filename;
+        img.loading = 'lazy';
+        
+        // Click for fullscreen
+        img.addEventListener('click', () => {
+            showFullscreenImage(img.src);
+        });
+        
+        previewContainer.appendChild(img);
+    }
+    
+    elem.appendChild(previewContainer);
+}
+
+/**
+ * Add preview images from node.imgs (HTMLImageElement array used by some nodes)
+ * @param {HTMLElement} elem 
+ * @param {ComfyUIGraphNode} node 
+ */
+function addNodeImgsPreview(elem, node) {
+    // @ts-ignore - imgs is a runtime property containing HTMLImageElement instances
+    const imgs = node.imgs;
+    if (!imgs || !Array.isArray(imgs) || imgs.length === 0) return;
+    
+    const previewContainer = document.createElement('div');
+    previewContainer.classList.add('comfy-mobile-form-node-preview');
+    
+    for (const imgElement of imgs) {
+        // imgs can be HTMLImageElement instances or objects with src
+        const img = document.createElement('img');
+        img.src = imgElement.src || imgElement;
+        img.alt = 'Preview';
+        img.loading = 'lazy';
+        
+        // Click for fullscreen
+        img.addEventListener('click', () => {
+            showFullscreenImage(img.src);
+        });
+        
+        // Handle errors
+        img.addEventListener('error', () => {
+            img.style.display = 'none';
+        });
+        
+        previewContainer.appendChild(img);
+    }
+    
+    elem.appendChild(previewContainer);
+}
+
+/**
+ * Show fullscreen image overlay
+ * @param {string} src 
+ */
+function showFullscreenImage(src) {
+    const overlay = document.createElement('div');
+    overlay.classList.add('comfy-mobile-form-fullscreen-overlay');
+    
+    const img = document.createElement('img');
+    img.src = src;
+    overlay.appendChild(img);
+    
+    const closeBtn = document.createElement('button');
+    closeBtn.classList.add('comfy-mobile-form-fullscreen-close');
+    closeBtn.innerHTML = '✕';
+    closeBtn.addEventListener('click', () => overlay.remove());
+    overlay.appendChild(closeBtn);
+    
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) overlay.remove();
+    });
+    
+    document.body.appendChild(overlay);
+}
+
 /**
  * @param {HTMLDivElement} elem 
  * @param {ComfyUIGraphNode} node 
@@ -10,70 +831,235 @@
 export function createWidgetFromNode(elem, node) {
     elem.classList.add("comfy-mobile-form-widget");
     
+    // Store node ID for drag/drop ordering
+    elem.dataset.nodeId = String(node.id);
+    
+    // Check if node is bypassed (mode = 4)
+    // @ts-ignore - mode exists on LiteGraph nodes
+    if (node.mode === 4) {
+        elem.classList.add('bypassed');
+    }
+    
+    // Load and apply saved settings
+    const settings = getWidgetSettings(node.id);
+    applyWidgetSettings(elem, settings);
+    
+    // Add edit dot
+    addEditDot(elem, node.id);
+    
+    let hasContent = false;
+    
+    // Check extension registry for a registered handler first
+    const registeredHandler = ExtensionRegistry.getNodeHandler(node.type);
+    if (registeredHandler) {
+        try {
+            hasContent = registeredHandler({
+                elem,
+                node,
+                addTitle,
+                addWidget,
+                addLoadedImagePreview,
+                addLoadedVideoPreview,
+                addNodeImagePreview,
+                addNodeImgsPreview
+            });
+            
+            // Extension handlers are responsible for deciding whether to show
+            // node.images/node.imgs - don't add them automatically to avoid duplicates
+            
+            return hasContent;
+        } catch (e) {
+            console.error(`[MobileForm] Extension handler error for ${node.type}:`, e);
+            // Fall through to default handling
+        }
+    }
+    
     switch(node.type) {
         case 'PrimitiveNode': {
-            if(!Array.isArray(node.widgets)) return false;
+            if(!Array.isArray(node.widgets)) break;
 
             for(const widget of node.widgets) {
                 if(widget.name === 'value') {
                     addTitle(elem, node.title);
-                    addWidget(elem, widget);
-                    return true;
+                    addWidget(elem, widget, node);
+                    hasContent = true;
+                    break;
                 }
             }
-
             break;
         }
         case 'Note': {
-            if(!Array.isArray(node.widgets)) return false;
+            if(!Array.isArray(node.widgets)) break;
 
             for(const widget of node.widgets) {
                 if(widget.type === 'customtext') {
                     addTextNote(elem, widget);
-                    return true;
+                    hasContent = true;
+                    break;
+                }
+            }
+            break;
+        }
+        case 'LoadImage':
+        case 'LoadImageMask': {
+            // Special handling for LoadImage nodes - show preview from input folder
+            addTitle(elem, node.title);
+            
+            if(Array.isArray(node.widgets)) {
+                const imageWidget = node.widgets.find(w => w.name === 'image');
+                if(imageWidget && imageWidget.value) {
+                    addLoadedImagePreview(elem, imageWidget.value, 'input', node);
+                    hasContent = true;
+                }
+                
+                // Add other widgets
+                const group_elem = document.createElement('div');
+                group_elem.classList.add("comfy-mobile-form-group");
+                
+                for(const widget of node.widgets) {
+                    if(widget.hidden || widget.type === 'converted-widget') continue;
+                    
+                    const widgetWrapper = document.createElement('div');
+                    widgetWrapper.classList.add("comfy-mobile-form-widget-wrapper");
+                    
+                    addTitle(widgetWrapper, widget.name);
+                    if(addWidget(widgetWrapper, widget, node)) {
+                        group_elem.appendChild(widgetWrapper);
+                    }
+                }
+                
+                if(group_elem.children.length > 0) {
+                    elem.appendChild(group_elem);
+                    hasContent = true;
+                }
+            }
+            break;
+        }
+        case 'LoadImageFromOutputFolder':
+        case 'LoadImageOutput':
+        case 'Load Image From Output Folder': {
+            // Special handling for loading images from output folder
+            addTitle(elem, node.title);
+            
+            if(Array.isArray(node.widgets)) {
+                // Try common widget names for output folder image loaders
+                const imageWidget = node.widgets.find(w => 
+                    w.name === 'image' || w.name === 'filename' || w.name === 'file'
+                );
+                const subfolderWidget = node.widgets.find(w => 
+                    w.name === 'subfolder' || w.name === 'folder'
+                );
+                
+                if(imageWidget && imageWidget.value) {
+                    const subfolder = subfolderWidget?.value || '';
+                    const fullPath = subfolder ? `${subfolder}/${imageWidget.value}` : imageWidget.value;
+                    addLoadedImagePreview(elem, fullPath, 'output', node);
+                    hasContent = true;
+                }
+                
+                // Add other widgets
+                const group_elem = document.createElement('div');
+                group_elem.classList.add("comfy-mobile-form-group");
+                
+                for(const widget of node.widgets) {
+                    if(widget.hidden || widget.type === 'converted-widget') continue;
+                    
+                    const widgetWrapper = document.createElement('div');
+                    widgetWrapper.classList.add("comfy-mobile-form-widget-wrapper");
+                    
+                    addTitle(widgetWrapper, widget.name);
+                    if(addWidget(widgetWrapper, widget, node)) {
+                        group_elem.appendChild(widgetWrapper);
+                    }
+                }
+                
+                if(group_elem.children.length > 0) {
+                    elem.appendChild(group_elem);
+                    hasContent = true;
+                }
+            }
+            break;
+        }
+        case 'VHS_LoadVideo':
+        case 'LoadVideo': {
+            // Special handling for LoadVideo nodes
+            addTitle(elem, node.title);
+            
+            if(Array.isArray(node.widgets)) {
+                const videoWidget = node.widgets.find(w => w.name === 'video' || w.name === 'video_path');
+                if(videoWidget && videoWidget.value) {
+                    addLoadedVideoPreview(elem, videoWidget.value, 'input', node);
+                    hasContent = true;
+                }
+                
+                // Add other widgets
+                const group_elem = document.createElement('div');
+                group_elem.classList.add("comfy-mobile-form-group");
+                
+                for(const widget of node.widgets) {
+                    if(widget.hidden || widget.type === 'converted-widget') continue;
+                    
+                    const widgetWrapper = document.createElement('div');
+                    widgetWrapper.classList.add("comfy-mobile-form-widget-wrapper");
+                    
+                    addTitle(widgetWrapper, widget.name);
+                    if(addWidget(widgetWrapper, widget, node)) {
+                        group_elem.appendChild(widgetWrapper);
+                    }
+                }
+                
+                if(group_elem.children.length > 0) {
+                    elem.appendChild(group_elem);
+                    hasContent = true;
                 }
             }
             break;
         }
         default: {
-            if(!Array.isArray(node.widgets)) return false;
+            if(!Array.isArray(node.widgets) && !node.images) break;
             
             addTitle(elem, node.title);
 
-            const group_elem = document.createElement('div');
-            group_elem.classList.add("comfy-mobile-form-group");
-            elem.appendChild(group_elem);
+            if(Array.isArray(node.widgets)) {
+                const group_elem = document.createElement('div');
+                group_elem.classList.add("comfy-mobile-form-group");
+                elem.appendChild(group_elem);
 
-            for(const widget of node.widgets) {
-                addTitle(group_elem, widget.name);
-                addWidget(group_elem, widget);
-            }
-
-            if(node.widgets.length >= 3) {
-                let opened = false;
-                group_elem.classList.add("comfy-mobile-form-hidden");
-    
-                const toggle_button = document.createElement('button');
-                toggle_button.textContent = "Expand";
-                toggle_button.addEventListener('click', () => {
-                    opened = !opened;
-                    toggle_button.textContent = opened ? "Close" : "Expand";
-    
-                    if(opened) {
-                        group_elem.classList.remove("comfy-mobile-form-hidden");
-                    } else {
-                        group_elem.classList.add("comfy-mobile-form-hidden");
+                let widgetCount = 0;
+                for(const widget of node.widgets) {
+                    // Skip hidden widgets
+                    if(widget.hidden || widget.type === 'converted-widget') continue;
+                    
+                    const widgetWrapper = document.createElement('div');
+                    widgetWrapper.classList.add("comfy-mobile-form-widget-wrapper");
+                    
+                    addTitle(widgetWrapper, widget.name);
+                    if(addWidget(widgetWrapper, widget, node)) {
+                        group_elem.appendChild(widgetWrapper);
+                        widgetCount++;
                     }
-                });
-    
-                elem.appendChild(toggle_button);
+                }
+                
+                hasContent = widgetCount > 0;
             }
-
-            return true;
+            break;
         }
     }
-
-    return false;
+    
+    // Always add node preview images if they exist (from execution results)
+    if(node.images && Array.isArray(node.images) && node.images.length > 0) {
+        addNodeImagePreview(elem, node);
+        hasContent = true;
+    }
+    
+    // Check for imgs property (used by some nodes for preview)
+    // @ts-ignore - imgs is a runtime property
+    if(node.imgs && Array.isArray(node.imgs) && node.imgs.length > 0) {
+        addNodeImgsPreview(elem, node);
+        hasContent = true;
+    }
+    
+    return hasContent;
 }
 
 /**
@@ -82,6 +1068,7 @@ export function createWidgetFromNode(elem, node) {
  */
 export function addTitle(elem, title) {
     const label_elem = document.createElement('label');
+    label_elem.classList.add("comfy-mobile-form-label");
     label_elem.textContent = title;
     elem.appendChild(label_elem);
 }
@@ -89,23 +1076,149 @@ export function addTitle(elem, title) {
 /**
  * @param {HTMLDivElement} elem 
  * @param {ComfyUIGraphWidget} widget 
+ * @param {ComfyUIGraphNode} [node]
+ * @returns {boolean}
  */
-export function addWidget(elem, widget) {
-    switch(widget.type) {
-        case 'combo': addComboWidget(elem, widget); break;
-        case 'number': addNumberWidget(elem, widget); break;
-        case 'customtext': addCustomTextWidget(elem, widget); break;
-        default: console.warn("[MobileForm]", "Unknown widget:", widget);
+export function addWidget(elem, widget, node) {
+    const type = widget.type?.toLowerCase?.() || widget.type;
+    
+    // Check extension registry for a registered widget handler first
+    const registeredHandler = ExtensionRegistry.getWidgetHandler(type);
+    if (registeredHandler) {
+        try {
+            const handled = registeredHandler({ elem, widget, node });
+            if (handled) return true;
+            // If handler returns false, fall through to default handling
+        } catch (e) {
+            console.error(`[MobileForm] Widget handler error for ${type}:`, e);
+            // Fall through to default handling
+        }
+    }
+    
+    switch(type) {
+        case 'combo': 
+            addComboWidget(elem, widget); 
+            return true;
+        case 'number': 
+            addNumberWidget(elem, widget); 
+            return true;
+        case 'float':
+            addFloatWidget(elem, widget);
+            return true;
+        case 'int':
+            addIntWidget(elem, widget);
+            return true;
+        case 'string':
+        case 'text':
+            addTextWidget(elem, widget);
+            return true;
+        case 'customtext':
+        case 'multiline':
+            addCustomTextWidget(elem, widget);
+            return true;
+        case 'boolean':
+        case 'toggle':
+            addBooleanWidget(elem, widget);
+            return true;
+        case 'button':
+            addButtonWidget(elem, widget);
+            return true;
+        case 'slider':
+            addSliderWidget(elem, widget);
+            return true;
+        case 'seed':
+            addSeedWidget(elem, widget);
+            return true;
+        case 'image':
+        case 'imageupload':
+            // Handled by media.js
+            addImageUploadWidget(elem, widget, node);
+            return true;
+        case 'video':
+        case 'videoupload':
+            // Handled by media.js
+            addVideoUploadWidget(elem, widget, node);
+            return true;
+        default:
+            // Try to infer type from options
+            if(widget.options?.values && Array.isArray(widget.options.values)) {
+                addComboWidget(elem, widget);
+                return true;
+            }
+            if(typeof widget.value === 'number') {
+                addNumberWidget(elem, widget);
+                return true;
+            }
+            if(typeof widget.value === 'boolean') {
+                addBooleanWidget(elem, widget);
+                return true;
+            }
+            if(typeof widget.value === 'string') {
+                // Check if multiline
+                if(widget.options?.multiline || widget.value.includes('\n')) {
+                    addCustomTextWidget(elem, widget);
+                } else {
+                    addTextWidget(elem, widget);
+                }
+                return true;
+            }
+            console.warn("[MobileForm]", "Unknown widget type:", widget.type, widget);
+            return false;
     }
 }
 
 /**
  * @param {HTMLDivElement} elem 
- * @param {{type: 'combo', value: string, options: {values: string[]}}} widget 
+ * @param {{type: 'combo', name: string, value: string, options: {values: string[] | (() => string[])}}} widget 
  */
 export function addComboWidget(elem, widget) {
+    const wrapper = document.createElement('div');
+    wrapper.classList.add("comfy-mobile-form-combo-wrapper");
+    
     const select_elem = document.createElement('select');
-    select_elem.replaceChildren(...widget.options.values.map((value) => {
+    select_elem.classList.add("comfy-mobile-form-select");
+    
+    // Get values - they may be a function or various formats
+    let values = widget.options?.values || [];
+    if(typeof values === 'function') {
+        try {
+            values = values();
+        } catch(e) {
+            values = [];
+        }
+    }
+    
+    // Ensure values is an array
+    if(!Array.isArray(values)) {
+        // Could be an object or other type - try to convert
+        if(values && typeof values === 'object') {
+            values = Object.keys(values);
+        } else if(typeof values === 'string') {
+            values = [values];
+        } else {
+            values = [];
+        }
+    }
+    
+    // Add search for large lists
+    if(values.length > 10) {
+        const searchInput = document.createElement('input');
+        searchInput.type = 'text';
+        searchInput.placeholder = 'Search...';
+        searchInput.classList.add("comfy-mobile-form-combo-search");
+        
+        searchInput.addEventListener('input', () => {
+            const filter = searchInput.value.toLowerCase();
+            for(const option of select_elem.options) {
+                const match = option.text.toLowerCase().includes(filter);
+                option.style.display = match ? '' : 'none';
+            }
+        });
+        
+        wrapper.appendChild(searchInput);
+    }
+    
+    select_elem.replaceChildren(...values.map((value) => {
         const option_elem = document.createElement('option');
         option_elem.value = value;
         option_elem.textContent = value;
@@ -113,41 +1226,485 @@ export function addComboWidget(elem, widget) {
     }));
 
     select_elem.value = widget.value;
-
-    elem.appendChild(select_elem);
+    wrapper.appendChild(select_elem);
+    elem.appendChild(wrapper);
 
     select_elem.addEventListener('change', () => {
         widget.value = select_elem.value;
-    })
-}
-
-/**
- * @param {HTMLDivElement} elem 
- * @param {{type: 'number', value: number}} widget 
- */
-export function addNumberWidget(elem, widget) {
-    const input_elem = document.createElement('input');
-    input_elem.type = 'number';
-    input_elem.value = `${widget.value}`;
-    elem.appendChild(input_elem);
-
-    input_elem.addEventListener('change', () => {
-        widget.value = parseFloat(input_elem.value);
+        widget.callback?.(widget.value);
     });
 }
 
 /**
  * @param {HTMLDivElement} elem 
- * @param {{type: 'customtext', value: string}} widget 
+ * @param {{type: 'number', name: string, value: number, options?: {min?: number, max?: number, step?: number, precision?: number}}} widget 
  */
-export function addCustomTextWidget(elem, widget) {
+export function addNumberWidget(elem, widget) {
+    const wrapper = document.createElement('div');
+    wrapper.classList.add("comfy-mobile-form-number-wrapper");
+    
+    const input_elem = document.createElement('input');
+    input_elem.type = 'number';
+    input_elem.classList.add("comfy-mobile-form-number");
+    input_elem.value = `${widget.value}`;
+    
+    // Apply constraints from options
+    const options = widget.options || {};
+    if(options.min !== undefined) input_elem.min = `${options.min}`;
+    if(options.max !== undefined) input_elem.max = `${options.max}`;
+    if(options.step !== undefined) {
+        input_elem.step = `${options.step}`;
+    } else if(options.precision !== undefined) {
+        input_elem.step = `${Math.pow(10, -options.precision)}`;
+    }
+    
+    // Add increment/decrement buttons for mobile
+    const decrementBtn = document.createElement('button');
+    decrementBtn.classList.add("comfy-mobile-form-number-btn", "decrement");
+    decrementBtn.textContent = '−';
+    decrementBtn.type = 'button';
+    
+    const incrementBtn = document.createElement('button');
+    incrementBtn.classList.add("comfy-mobile-form-number-btn", "increment");
+    incrementBtn.textContent = '+';
+    incrementBtn.type = 'button';
+    
+    const step = options.step || 1;
+    
+    decrementBtn.addEventListener('click', () => {
+        let newVal = parseFloat(input_elem.value) - step;
+        if(options.min !== undefined) newVal = Math.max(options.min, newVal);
+        input_elem.value = formatNumber(newVal, options.precision);
+        widget.value = parseFloat(input_elem.value);
+        widget.callback?.(widget.value);
+    });
+    
+    incrementBtn.addEventListener('click', () => {
+        let newVal = parseFloat(input_elem.value) + step;
+        if(options.max !== undefined) newVal = Math.min(options.max, newVal);
+        input_elem.value = formatNumber(newVal, options.precision);
+        widget.value = parseFloat(input_elem.value);
+        widget.callback?.(widget.value);
+    });
+    
+    wrapper.appendChild(decrementBtn);
+    wrapper.appendChild(input_elem);
+    wrapper.appendChild(incrementBtn);
+    elem.appendChild(wrapper);
+
+    input_elem.addEventListener('change', () => {
+        let val = parseFloat(input_elem.value);
+        if(options.min !== undefined) val = Math.max(options.min, val);
+        if(options.max !== undefined) val = Math.min(options.max, val);
+        input_elem.value = formatNumber(val, options.precision);
+        widget.value = val;
+        widget.callback?.(widget.value);
+    });
+}
+
+/**
+ * @param {HTMLDivElement} elem 
+ * @param {ComfyUIGraphWidget} widget 
+ */
+export function addFloatWidget(elem, widget) {
+    // FLOAT is just a number with decimal support
+    const options = widget.options || {};
+    if(options.precision === undefined) options.precision = 3;
+    if(options.step === undefined) options.step = 0.1;
+    widget.options = options;
+    addNumberWidget(elem, widget);
+}
+
+/**
+ * @param {HTMLDivElement} elem 
+ * @param {ComfyUIGraphWidget} widget 
+ */
+export function addIntWidget(elem, widget) {
+    // INT is a whole number
+    const options = widget.options || {};
+    options.step = options.step || 1;
+    options.precision = 0;
+    widget.options = options;
+    addNumberWidget(elem, widget);
+}
+
+/**
+ * @param {HTMLDivElement} elem 
+ * @param {{type: 'string' | 'text', name: string, value: string, options?: {placeholder?: string, maxLength?: number}}} widget 
+ */
+export function addTextWidget(elem, widget) {
+    // Use textarea for all text inputs for consistent height handling
     const textarea_elem = document.createElement('textarea');
-    textarea_elem.value = widget.value;
+    textarea_elem.classList.add("comfy-mobile-form-textarea");
+    textarea_elem.value = widget.value || '';
+    
+    if(widget.options?.placeholder) {
+        textarea_elem.placeholder = widget.options.placeholder;
+    }
+    if(widget.options?.maxLength) {
+        textarea_elem.maxLength = widget.options.maxLength;
+    }
+    
     elem.appendChild(textarea_elem);
 
     textarea_elem.addEventListener('change', () => {
         widget.value = textarea_elem.value;
+        widget.callback?.(widget.value);
     });
+    
+    // Also update on input for real-time sync
+    textarea_elem.addEventListener('input', () => {
+        widget.value = textarea_elem.value;
+    });
+}
+
+/**
+ * @param {HTMLDivElement} elem 
+ * @param {{type: 'customtext', name: string, value: string, options?: {multiline?: boolean, dynamicPrompts?: boolean}}} widget 
+ */
+export function addCustomTextWidget(elem, widget) {
+    const textarea_elem = document.createElement('textarea');
+    textarea_elem.classList.add("comfy-mobile-form-textarea");
+    textarea_elem.value = widget.value || '';
+    textarea_elem.placeholder = widget.options?.dynamicPrompts ? 'Enter prompt...' : '';
+    
+    elem.appendChild(textarea_elem);
+
+    textarea_elem.addEventListener('input', () => {
+        widget.value = textarea_elem.value;
+    });
+    
+    textarea_elem.addEventListener('change', () => {
+        widget.value = textarea_elem.value;
+        widget.callback?.(widget.value);
+    });
+}
+
+/**
+ * @param {HTMLDivElement} elem 
+ * @param {{type: 'boolean' | 'toggle', name: string, value: boolean, options?: {}}} widget 
+ */
+export function addBooleanWidget(elem, widget) {
+    const wrapper = document.createElement('label');
+    wrapper.classList.add("comfy-mobile-form-toggle-wrapper");
+    
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.classList.add("comfy-mobile-form-toggle-input");
+    checkbox.checked = !!widget.value;
+    
+    const slider = document.createElement('span');
+    slider.classList.add("comfy-mobile-form-toggle-slider");
+    
+    wrapper.appendChild(checkbox);
+    wrapper.appendChild(slider);
+    elem.appendChild(wrapper);
+    
+    checkbox.addEventListener('change', () => {
+        widget.value = checkbox.checked;
+        widget.callback?.(widget.value);
+    });
+}
+
+/**
+ * @param {HTMLDivElement} elem 
+ * @param {{type: 'button', name: string, value?: any, callback?: Function}} widget 
+ */
+export function addButtonWidget(elem, widget) {
+    const button = document.createElement('button');
+    button.classList.add("comfy-mobile-form-button");
+    button.textContent = widget.name || 'Button';
+    button.type = 'button';
+    
+    elem.appendChild(button);
+    
+    button.addEventListener('click', () => {
+        widget.callback?.(widget);
+    });
+}
+
+/**
+ * @param {HTMLDivElement} elem 
+ * @param {{type: 'slider', name: string, value: number, options?: {min?: number, max?: number, step?: number}}} widget 
+ */
+export function addSliderWidget(elem, widget) {
+    const wrapper = document.createElement('div');
+    wrapper.classList.add("comfy-mobile-form-slider-wrapper");
+    
+    const options = widget.options || {};
+    const min = options.min ?? 0;
+    const max = options.max ?? 100;
+    const step = options.step ?? 1;
+    
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.classList.add("comfy-mobile-form-slider");
+    slider.min = `${min}`;
+    slider.max = `${max}`;
+    slider.step = `${step}`;
+    slider.value = `${widget.value}`;
+    
+    const valueDisplay = document.createElement('span');
+    valueDisplay.classList.add("comfy-mobile-form-slider-value");
+    valueDisplay.textContent = `${widget.value}`;
+    
+    wrapper.appendChild(slider);
+    wrapper.appendChild(valueDisplay);
+    elem.appendChild(wrapper);
+    
+    slider.addEventListener('input', () => {
+        widget.value = parseFloat(slider.value);
+        valueDisplay.textContent = `${widget.value}`;
+    });
+    
+    slider.addEventListener('change', () => {
+        widget.callback?.(widget.value);
+    });
+}
+
+/**
+ * @param {HTMLDivElement} elem 
+ * @param {{type: 'seed', name: string, value: number, options?: {min?: number, max?: number}}} widget 
+ */
+export function addSeedWidget(elem, widget) {
+    const wrapper = document.createElement('div');
+    wrapper.classList.add("comfy-mobile-form-seed-wrapper");
+    
+    const options = widget.options || {};
+    const min = options.min ?? 0;
+    const max = options.max ?? 0xffffffffffffffff;
+    
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.classList.add("comfy-mobile-form-seed-input");
+    input.value = `${widget.value}`;
+    input.min = `${min}`;
+    input.max = `${max}`;
+    
+    const randomBtn = document.createElement('button');
+    randomBtn.classList.add("comfy-mobile-form-seed-random");
+    randomBtn.innerHTML = '🎲';
+    randomBtn.title = 'Random seed';
+    randomBtn.type = 'button';
+    
+    const lastBtn = document.createElement('button');
+    lastBtn.classList.add("comfy-mobile-form-seed-last");
+    lastBtn.innerHTML = '↩';
+    lastBtn.title = 'Last seed';
+    lastBtn.type = 'button';
+    
+    let lastSeed = widget.value;
+    
+    randomBtn.addEventListener('click', () => {
+        lastSeed = widget.value;
+        const newSeed = Math.floor(Math.random() * max);
+        input.value = `${newSeed}`;
+        widget.value = newSeed;
+        widget.callback?.(widget.value);
+    });
+    
+    lastBtn.addEventListener('click', () => {
+        input.value = `${lastSeed}`;
+        widget.value = lastSeed;
+        widget.callback?.(widget.value);
+    });
+    
+    input.addEventListener('change', () => {
+        lastSeed = widget.value;
+        widget.value = parseInt(input.value, 10);
+        widget.callback?.(widget.value);
+    });
+    
+    wrapper.appendChild(input);
+    wrapper.appendChild(randomBtn);
+    wrapper.appendChild(lastBtn);
+    elem.appendChild(wrapper);
+}
+
+/**
+ * @param {HTMLDivElement} elem 
+ * @param {ComfyUIGraphWidget} widget 
+ * @param {ComfyUIGraphNode} [node]
+ */
+export function addImageUploadWidget(elem, widget, node) {
+    const wrapper = document.createElement('div');
+    wrapper.classList.add("comfy-mobile-form-image-upload");
+    
+    const preview = document.createElement('div');
+    preview.classList.add("comfy-mobile-form-image-preview");
+    
+    // Show current image if exists
+    if(widget.value) {
+        const img = document.createElement('img');
+        img.src = getImageUrl(widget.value);
+        img.alt = 'Current image';
+        preview.appendChild(img);
+    } else {
+        preview.innerHTML = '<span class="placeholder">No image selected</span>';
+    }
+    
+    const inputWrapper = document.createElement('div');
+    inputWrapper.classList.add("comfy-mobile-form-upload-buttons");
+    
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = 'image/*';
+    fileInput.classList.add("comfy-mobile-form-file-input");
+    fileInput.id = `image-upload-${Math.random().toString(36).substr(2, 9)}`;
+    
+    const uploadBtn = document.createElement('label');
+    uploadBtn.classList.add("comfy-mobile-form-upload-btn");
+    uploadBtn.htmlFor = fileInput.id;
+    uploadBtn.innerHTML = '📁 Choose File';
+    
+    // Camera button for mobile
+    const cameraBtn = document.createElement('button');
+    cameraBtn.classList.add("comfy-mobile-form-camera-btn");
+    cameraBtn.innerHTML = '📷 Camera';
+    cameraBtn.type = 'button';
+    
+    const cameraInput = document.createElement('input');
+    cameraInput.type = 'file';
+    cameraInput.accept = 'image/*';
+    cameraInput.capture = 'environment';
+    cameraInput.classList.add("comfy-mobile-form-file-input");
+    
+    cameraBtn.addEventListener('click', () => cameraInput.click());
+    
+    const handleFile = async (file) => {
+        if(!file) return;
+        
+        preview.innerHTML = '<span class="loading">Uploading...</span>';
+        
+        try {
+            const result = await uploadImage(file);
+            if(result) {
+                widget.value = result.name;
+                const img = document.createElement('img');
+                img.src = getImageUrl(result.name, result.subfolder, result.type);
+                img.alt = 'Uploaded image';
+                preview.innerHTML = '';
+                preview.appendChild(img);
+                widget.callback?.(widget.value);
+            }
+        } catch(e) {
+            console.error('[MobileForm] Image upload failed:', e);
+            preview.innerHTML = '<span class="error">Upload failed</span>';
+        }
+    };
+    
+    fileInput.addEventListener('change', () => handleFile(fileInput.files?.[0]));
+    cameraInput.addEventListener('change', () => handleFile(cameraInput.files?.[0]));
+    
+    // Drag and drop
+    wrapper.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        wrapper.classList.add('dragover');
+    });
+    
+    wrapper.addEventListener('dragleave', () => {
+        wrapper.classList.remove('dragover');
+    });
+    
+    wrapper.addEventListener('drop', (e) => {
+        e.preventDefault();
+        wrapper.classList.remove('dragover');
+        handleFile(e.dataTransfer?.files?.[0]);
+    });
+    
+    inputWrapper.appendChild(fileInput);
+    inputWrapper.appendChild(uploadBtn);
+    inputWrapper.appendChild(cameraInput);
+    inputWrapper.appendChild(cameraBtn);
+    
+    wrapper.appendChild(preview);
+    wrapper.appendChild(inputWrapper);
+    elem.appendChild(wrapper);
+}
+
+/**
+ * @param {HTMLDivElement} elem 
+ * @param {ComfyUIGraphWidget} widget 
+ * @param {ComfyUIGraphNode} [node]
+ */
+export function addVideoUploadWidget(elem, widget, node) {
+    const wrapper = document.createElement('div');
+    wrapper.classList.add("comfy-mobile-form-video-upload");
+    
+    const preview = document.createElement('div');
+    preview.classList.add("comfy-mobile-form-video-preview");
+    
+    if(widget.value) {
+        const video = document.createElement('video');
+        video.src = getVideoUrl(widget.value);
+        video.controls = true;
+        video.muted = true;
+        preview.appendChild(video);
+    } else {
+        preview.innerHTML = '<span class="placeholder">No video selected</span>';
+    }
+    
+    const inputWrapper = document.createElement('div');
+    inputWrapper.classList.add("comfy-mobile-form-upload-buttons");
+    
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = 'video/*';
+    fileInput.classList.add("comfy-mobile-form-file-input");
+    fileInput.id = `video-upload-${Math.random().toString(36).substr(2, 9)}`;
+    
+    const uploadBtn = document.createElement('label');
+    uploadBtn.classList.add("comfy-mobile-form-upload-btn");
+    uploadBtn.htmlFor = fileInput.id;
+    uploadBtn.innerHTML = '📁 Choose Video';
+    
+    const handleFile = async (file) => {
+        if(!file) return;
+        
+        preview.innerHTML = '<span class="loading">Uploading...</span>';
+        
+        try {
+            const result = await uploadVideo(file);
+            if(result) {
+                widget.value = result.name;
+                const video = document.createElement('video');
+                video.src = getVideoUrl(result.name, result.subfolder, result.type);
+                video.controls = true;
+                video.muted = true;
+                preview.innerHTML = '';
+                preview.appendChild(video);
+                widget.callback?.(widget.value);
+            }
+        } catch(e) {
+            console.error('[MobileForm] Video upload failed:', e);
+            preview.innerHTML = '<span class="error">Upload failed</span>';
+        }
+    };
+    
+    fileInput.addEventListener('change', () => handleFile(fileInput.files?.[0]));
+    
+    // Drag and drop
+    wrapper.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        wrapper.classList.add('dragover');
+    });
+    
+    wrapper.addEventListener('dragleave', () => {
+        wrapper.classList.remove('dragover');
+    });
+    
+    wrapper.addEventListener('drop', (e) => {
+        e.preventDefault();
+        wrapper.classList.remove('dragover');
+        handleFile(e.dataTransfer?.files?.[0]);
+    });
+    
+    inputWrapper.appendChild(fileInput);
+    inputWrapper.appendChild(uploadBtn);
+    
+    wrapper.appendChild(preview);
+    wrapper.appendChild(inputWrapper);
+    elem.appendChild(wrapper);
 }
 
 /**
@@ -155,7 +1712,99 @@ export function addCustomTextWidget(elem, widget) {
  * @param {{type: 'customtext', value: string}} widget 
  */
 export function addTextNote(elem, widget) {
-    const text_elem = document.createElement('span');
-    text_elem.textContent = widget.value;
+    elem.classList.add("comfy-mobile-form-note");
+    const text_elem = document.createElement('div');
+    text_elem.classList.add("comfy-mobile-form-note-text");
+    text_elem.innerHTML = widget.value.replace(/\n/g, '<br>');
     elem.appendChild(text_elem);
+}
+
+// ============ Helper Functions ============
+
+/**
+ * Format a number with optional precision
+ * @param {number} value 
+ * @param {number} [precision] 
+ * @returns {string}
+ */
+function formatNumber(value, precision) {
+    if(precision !== undefined && precision >= 0) {
+        return value.toFixed(precision);
+    }
+    return String(value);
+}
+
+/**
+ * Get image URL from ComfyUI
+ * @param {string} filename 
+ * @param {string} [subfolder] 
+ * @param {string} [type] 
+ * @returns {string}
+ */
+function getImageUrl(filename, subfolder = '', type = 'input') {
+    const params = new URLSearchParams({ filename, subfolder, type });
+    return `/view?${params.toString()}`;
+}
+
+/**
+ * Get video URL from ComfyUI
+ * @param {string} filename 
+ * @param {string} [subfolder] 
+ * @param {string} [type] 
+ * @returns {string}
+ */
+function getVideoUrl(filename, subfolder = '', type = 'input') {
+    const params = new URLSearchParams({ filename, subfolder, type });
+    return `/view?${params.toString()}`;
+}
+
+/**
+ * Upload an image to ComfyUI
+ * @param {File} file 
+ * @returns {Promise<{name: string, subfolder: string, type: string} | null>}
+ */
+async function uploadImage(file) {
+    const formData = new FormData();
+    formData.append('image', file, file.name);
+    formData.append('overwrite', 'true');
+    
+    try {
+        const response = await fetch('/upload/image', {
+            method: 'POST',
+            body: formData
+        });
+        
+        if(response.ok) {
+            return await response.json();
+        }
+    } catch(e) {
+        console.error('[MobileForm] Upload error:', e);
+    }
+    return null;
+}
+
+/**
+ * Upload a video to ComfyUI
+ * @param {File} file 
+ * @returns {Promise<{name: string, subfolder: string, type: string} | null>}
+ */
+async function uploadVideo(file) {
+    const formData = new FormData();
+    formData.append('image', file, file.name);
+    formData.append('overwrite', 'true');
+    formData.append('type', 'input');
+    
+    try {
+        const response = await fetch('/upload/image', {
+            method: 'POST',
+            body: formData
+        });
+        
+        if(response.ok) {
+            return await response.json();
+        }
+    } catch(e) {
+        console.error('[MobileForm] Upload error:', e);
+    }
+    return null;
 }
