@@ -33,7 +33,7 @@ export function initCoreExtension(registry) {
         
         for (const widget of node.widgets) {
             if (widget.name === 'value') {
-                addTitle(elem, node.title || 'Primitive');
+                addTitle(elem, node.title || 'Primitive', node);
                 addWidget(elem, widget, node);
                 return true;
             }
@@ -63,7 +63,7 @@ export function initCoreExtension(registry) {
     registry.registerNodeHandler(['LoadImage', 'LoadImageMask'], (context) => {
         const { elem, node, addTitle, addWidget, addLoadedImagePreview } = context;
         
-        addTitle(elem, node.title || node.type || 'Load Image');
+        addTitle(elem, node.title || node.type || 'Load Image', node);
         
         if (!Array.isArray(node.widgets)) return true;
         
@@ -112,7 +112,7 @@ export function initCoreExtension(registry) {
     registry.registerNodeHandler(['LoadImageOutput', 'LoadImageFromOutputFolder', 'Load Image From Output Folder'], (context) => {
         const { elem, node, addTitle, addWidget, addLoadedImagePreview } = context;
         
-        addTitle(elem, node.title || 'Load Image (Output)');
+        addTitle(elem, node.title || 'Load Image (Output)', node);
         
         if (!Array.isArray(node.widgets)) return true;
         
@@ -171,7 +171,7 @@ export function initCoreExtension(registry) {
     registry.registerNodeHandler('LoadVideo', (context) => {
         const { elem, node, addTitle, addWidget, addLoadedVideoPreview } = context;
         
-        addTitle(elem, node.title || 'Load Video');
+        addTitle(elem, node.title || 'Load Video', node);
         
         if (!Array.isArray(node.widgets)) return true;
         
@@ -220,7 +220,7 @@ export function initCoreExtension(registry) {
     registry.registerNodeHandler('LoadAudio', (context) => {
         const { elem, node, addTitle, addWidget } = context;
         
-        addTitle(elem, node.title || 'Load Audio');
+        addTitle(elem, node.title || 'Load Audio', node);
         
         if (!Array.isArray(node.widgets)) return true;
         
@@ -258,7 +258,7 @@ export function initCoreExtension(registry) {
     registry.registerNodeHandler('WebcamCapture', (context) => {
         const { elem, node, addTitle, addWidget } = context;
         
-        addTitle(elem, node.title || 'Webcam Capture');
+        addTitle(elem, node.title || 'Webcam Capture', node);
         
         // Show info
         const infoElem = document.createElement('div');
@@ -299,7 +299,7 @@ export function initCoreExtension(registry) {
     registry.registerNodeHandler('RecordAudio', (context) => {
         const { elem, node, addTitle, addWidget } = context;
         
-        addTitle(elem, node.title || 'Record Audio');
+        addTitle(elem, node.title || 'Record Audio', node);
         
         // Show info
         const infoElem = document.createElement('div');
@@ -339,7 +339,7 @@ export function initCoreExtension(registry) {
     registry.registerNodeHandler('PreviewAny', (context) => {
         const { elem, node, addTitle } = context;
         
-        addTitle(elem, node.title || 'Preview Any');
+        addTitle(elem, node.title || 'Preview Any', node);
         
         const infoElem = document.createElement('div');
         infoElem.classList.add('comfy-mobile-form-info');

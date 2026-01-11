@@ -27,7 +27,7 @@ export function initKJNodesExtension(registry) {
     registry.registerNodeHandler('LoadAndResizeImage', (context) => {
         const { elem, node, addTitle, addWidget, addLoadedImagePreview } = context;
         
-        addTitle(elem, node.title || 'Load & Resize Image');
+        addTitle(elem, node.title || 'Load & Resize Image', node);
         
         if (!Array.isArray(node.widgets)) return true;
         
@@ -76,7 +76,7 @@ export function initKJNodesExtension(registry) {
     registry.registerNodeHandler('LoadImagesFromFolderKJ', (context) => {
         const { elem, node, addTitle, addWidget } = context;
         
-        addTitle(elem, node.title || 'Load Images From Folder');
+        addTitle(elem, node.title || 'Load Images From Folder', node);
         
         // Show info
         const infoElem = document.createElement('div');
@@ -116,7 +116,7 @@ export function initKJNodesExtension(registry) {
     registry.registerNodeHandler('LoadVideosFromFolder', (context) => {
         const { elem, node, addTitle, addWidget } = context;
         
-        addTitle(elem, node.title || 'Load Videos From Folder');
+        addTitle(elem, node.title || 'Load Videos From Folder', node);
         
         // Show info
         const infoElem = document.createElement('div');

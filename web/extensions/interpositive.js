@@ -24,7 +24,7 @@ export function initInterPositiveExtension(registry) {
     registry.registerNodeHandler('LoadImageVideoIO', (context) => {
         const { elem, node, addTitle, addWidget, addLoadedImagePreview, addLoadedVideoPreview } = context;
         
-        addTitle(elem, node.title || 'Load Image/Video');
+        addTitle(elem, node.title || 'Load Image/Video', node);
         
         if (!Array.isArray(node.widgets)) return true;
         
@@ -95,7 +95,7 @@ export function initInterPositiveExtension(registry) {
     registry.registerNodeHandler(['MMAudioModelLoader', 'MMAudioVoCoderLoader', 'MMAudioFeatureUtilsLoader'], (context) => {
         const { elem, node, addTitle, addWidget } = context;
         
-        addTitle(elem, node.title || node.type || 'MMAudio Loader');
+        addTitle(elem, node.title || node.type || 'MMAudio Loader', node);
         
         // Show info
         const infoElem = document.createElement('div');
@@ -135,7 +135,7 @@ export function initInterPositiveExtension(registry) {
     registry.registerNodeHandler('MMAudioSampler', (context) => {
         const { elem, node, addTitle, addWidget } = context;
         
-        addTitle(elem, node.title || 'MMAudio Sampler');
+        addTitle(elem, node.title || 'MMAudio Sampler', node);
         
         // Show info
         const infoElem = document.createElement('div');
@@ -175,7 +175,7 @@ export function initInterPositiveExtension(registry) {
     registry.registerNodeHandler('CombineVideoAndAudio', (context) => {
         const { elem, node, addTitle, addWidget } = context;
         
-        addTitle(elem, node.title || 'Combine Video & Audio');
+        addTitle(elem, node.title || 'Combine Video & Audio', node);
         
         // Show info
         const infoElem = document.createElement('div');

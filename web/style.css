@@ -1525,6 +1525,7 @@
 }
 
 .comfy-mobile-form-queue-btn,
+.comfy-mobile-form-batch-btn,
 .comfy-mobile-form-queue-front-btn,
 .comfy-mobile-form-cancel-btn {
     flex: 1;
@@ -1539,6 +1540,25 @@
     font-weight: 600;
     cursor: pointer;
     transition: all var(--mf-transition);
+}
+
+.comfy-mobile-form-batch-btn {
+    background: var(--mf-bg-tertiary);
+    color: var(--mf-text-primary);
+    border: 1px solid var(--mf-border);
+}
+
+.comfy-mobile-form-batch-btn:hover {
+    background: var(--mf-bg-hover);
+    border-color: var(--mf-accent);
+    color: var(--mf-accent);
+}
+
+.comfy-mobile-form-batch-btn svg {
+    width: 16px;
+    height: 16px;
+    stroke: currentColor;
+    fill: none;
 }
 
 .comfy-mobile-form-queue-btn {
@@ -2169,11 +2189,15 @@
     }
     
     .comfy-mobile-form-queue-btn {
-        flex: 1 1 100%;
+        flex: 1 1 60%;
     }
     
-    .comfy-mobile-form-queue-front-btn,
+    .comfy-mobile-form-batch-btn,
     .comfy-mobile-form-cancel-btn {
+        flex: 1 1 35%;
+    }
+    
+    .comfy-mobile-form-queue-front-btn {
         flex: 1 1 45%;
     }
     
@@ -2411,6 +2435,7 @@
 }
 
 .comfy-mobile-form-edit-mode .comfy-mobile-form-queue-btn,
+.comfy-mobile-form-edit-mode .comfy-mobile-form-batch-btn,
 .comfy-mobile-form-edit-mode .comfy-mobile-form-queue-front-btn,
 .comfy-mobile-form-edit-mode .comfy-mobile-form-cancel-btn {
     display: none;
@@ -2598,17 +2623,16 @@
 
 .comfy-mobile-form-tooltip-container {
     position: absolute;
-    left: 6px;
     top: 6px;
+    right: 26px; /* To the left of the edit dot (16px + 6px padding + 4px gap) */
     display: inline-flex;
     align-items: center;
-    z-index: var(--mf-z-tooltip, 3000);
+    z-index: 9; /* Below edit dot */
 }
 
-/* When widget is bypassed, move tooltip to avoid overlap with badge */
+/* When widget is bypassed, move tooltip further left to avoid overlap with badge */
 .comfy-mobile-form-widget.bypassed .comfy-mobile-form-tooltip-container {
-    left: auto;
-    right: 80px; /* After the BYPASSED badge */
+    right: 90px; /* After the BYPASSED badge */
 }
 
 .comfy-mobile-form-tooltip-icon {
@@ -2632,10 +2656,10 @@
     transform: scale(1.1);
 }
 
-/* Tooltip popup - positioned below the icon */
+/* Tooltip popup - positioned below the icon, aligned to right */
 .comfy-mobile-form-tooltip-content {
     position: absolute;
-    left: 0;
+    right: 0;
     top: 100%;
     margin-top: 8px;
     padding: 12px 16px;
@@ -2660,12 +2684,12 @@
     z-index: var(--mf-z-tooltip, 3000);
 }
 
-/* Arrow pointing up */
+/* Arrow pointing up - aligned to right */
 .comfy-mobile-form-tooltip-content::before {
     content: '';
     position: absolute;
     bottom: 100%;
-    left: 12px;
+    right: 4px;
     border: 6px solid transparent;
     border-bottom-color: var(--mf-border-color);
 }
@@ -2674,7 +2698,7 @@
     content: '';
     position: absolute;
     bottom: 100%;
-    left: 13px;
+    right: 5px;
     margin-bottom: -1px;
     border: 5px solid transparent;
     border-bottom-color: var(--mf-bg-secondary);
@@ -2701,14 +2725,14 @@
 /* Mobile - ensure tooltip doesn't overflow screen */
 @media (max-width: 600px) {
     .comfy-mobile-form-tooltip-content {
-        left: -8px;
+        right: -8px;
         max-width: calc(100vw - 48px);
         min-width: 160px;
     }
     
     .comfy-mobile-form-tooltip-content::before,
     .comfy-mobile-form-tooltip-content::after {
-        left: 16px;
+        right: 12px;
     }
 }
 
@@ -2929,6 +2953,57 @@
     color: var(--mf-text-muted);
     font-size: 12px;
     line-height: 1.5;
+}
+
+/* Rename dialog and inline rename styles */
+.comfy-mobile-form-rename-field {
+    margin-bottom: 16px;
+}
+
+.comfy-mobile-form-rename-field label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--mf-text-secondary);
+    margin-bottom: 6px;
+}
+
+.comfy-mobile-form-rename-input {
+    width: 100%;
+    padding: 10px 14px;
+    background: var(--mf-bg-secondary);
+    border: 1px solid var(--mf-border);
+    border-radius: var(--mf-radius-sm);
+    color: var(--mf-text-primary);
+    font-size: 14px;
+    outline: none;
+    transition: border-color var(--mf-transition);
+}
+
+.comfy-mobile-form-rename-input:focus {
+    border-color: var(--mf-accent);
+}
+
+/* Inline rename input (in label) */
+.comfy-mobile-form-inline-rename {
+    width: 100%;
+    padding: 2px 6px;
+    background: var(--mf-bg-secondary);
+    border: 1px solid var(--mf-accent);
+    border-radius: var(--mf-radius-xs);
+    color: var(--mf-text-primary);
+    font-size: inherit;
+    font-weight: inherit;
+    text-transform: inherit;
+    letter-spacing: inherit;
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+/* Section title inline rename */
+.comfy-mobile-form-section-title .comfy-mobile-form-inline-rename {
+    text-transform: uppercase;
+    font-weight: 600;
 }
 
 /* Confirm dialog styles */

@@ -204,7 +204,7 @@ export function createStandardNodeHandler(options = {}) {
     return function(context) {
         const { elem, node, addTitle, addWidget, addLoadedImagePreview, addLoadedVideoPreview } = context;
         
-        addTitle(elem, node.title || node.type || 'Node');
+        addTitle(elem, node.title || node.type || 'Node', node);
         
         if (!Array.isArray(node.widgets)) return true;
         

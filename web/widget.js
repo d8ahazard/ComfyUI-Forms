@@ -869,6 +869,34 @@ async function showContextMenu(widgetElem, nodeId, x, y) {
         menu.appendChild(colorSection);
     }
     
+    // Rename section
+    const renameSection = document.createElement('div');
+    renameSection.classList.add('comfy-mobile-form-context-menu-section');
+    
+    const renameItem = document.createElement('div');
+    renameItem.classList.add('comfy-mobile-form-context-menu-item');
+    renameItem.innerHTML = `<span class="check-icon">✏️</span>Rename`;
+    renameItem.title = 'Rename this widget/node';
+    renameItem.addEventListener('click', () => {
+        closeContextMenu();
+        const node = currentGraph?._nodes?.find(n => n.id === nodeId);
+        if (node) {
+            const currentTitle = node.title || node.type || 'Node';
+            showRenameDialog(currentTitle, 'Node', (newTitle) => {
+                node.title = newTitle;
+                // Update the label in the widget
+                const label = widgetElem.querySelector('.comfy-mobile-form-label');
+                if (label) label.textContent = newTitle;
+                // Trigger graph change to save
+                if (currentGraph) {
+                    currentGraph.setDirtyCanvas?.(true, true);
+                }
+            });
+        }
+    });
+    renameSection.appendChild(renameItem);
+    menu.appendChild(renameSection);
+    
     // Tooltip section
     const tooltipSection = document.createElement('div');
     tooltipSection.classList.add('comfy-mobile-form-context-menu-section');
@@ -1243,7 +1271,7 @@ export function createWidgetFromNode(elem, node) {
 
             for(const widget of node.widgets) {
                 if(widget.name === 'value') {
-                    addTitle(elem, node.title);
+                    addTitle(elem, node.title, node);
                     addWidget(elem, widget, node);
                     hasContent = true;
                     break;
@@ -1266,7 +1294,7 @@ export function createWidgetFromNode(elem, node) {
         case 'LoadImage':
         case 'LoadImageMask': {
             // Special handling for LoadImage nodes - show preview from input folder
-            addTitle(elem, node.title);
+            addTitle(elem, node.title, node);
             
             if(Array.isArray(node.widgets)) {
                 const imageWidget = node.widgets.find(w => w.name === 'image');
@@ -1302,7 +1330,7 @@ export function createWidgetFromNode(elem, node) {
         case 'LoadImageOutput':
         case 'Load Image From Output Folder': {
             // Special handling for loading images from output folder
-            addTitle(elem, node.title);
+            addTitle(elem, node.title, node);
             
             if(Array.isArray(node.widgets)) {
                 // Try common widget names for output folder image loaders
@@ -1346,7 +1374,7 @@ export function createWidgetFromNode(elem, node) {
         case 'VHS_LoadVideo':
         case 'LoadVideo': {
             // Special handling for LoadVideo nodes
-            addTitle(elem, node.title);
+            addTitle(elem, node.title, node);
             
             if(Array.isArray(node.widgets)) {
                 const videoWidget = node.widgets.find(w => w.name === 'video' || w.name === 'video_path');
@@ -1379,18 +1407,22 @@ export function createWidgetFromNode(elem, node) {
             break;
         }
         default: {
-            if(!Array.isArray(node.widgets) && !node.images) break;
+            // For nodes without a specific handler, render all their widgets
+            const hasWidgets = Array.isArray(node.widgets) && node.widgets.length > 0;
+            const hasImages = node.images && Array.isArray(node.images) && node.images.length > 0;
             
-            addTitle(elem, node.title);
+            if(!hasWidgets && !hasImages) break;
+            
+            addTitle(elem, node.title || node.type, node);
 
-            if(Array.isArray(node.widgets)) {
+            if(hasWidgets) {
                 const group_elem = document.createElement('div');
                 group_elem.classList.add("comfy-mobile-form-group");
                 elem.appendChild(group_elem);
 
                 let widgetCount = 0;
                 for(const widget of node.widgets) {
-                    // Skip hidden widgets
+                    // Skip hidden widgets and converted widgets
                     if(widget.hidden || widget.type === 'converted-widget') continue;
                     
                     const widgetWrapper = document.createElement('div');
@@ -1403,7 +1435,14 @@ export function createWidgetFromNode(elem, node) {
                     }
                 }
                 
-                hasContent = widgetCount > 0;
+                // Even if no widgets were added, show the node with its title
+                // This is useful for output nodes that might not have editable widgets
+                hasContent = widgetCount > 0 || hasImages;
+                
+                // If no widgets but we have images, remove the empty group
+                if (widgetCount === 0 && !hasImages) {
+                    group_elem.remove();
+                }
             }
             break;
         }
@@ -1429,13 +1468,154 @@ export function createWidgetFromNode(elem, node) {
 }
 
 /**
+ * Show inline rename editor for a title element
+ * @param {HTMLElement} labelElem - The label element to rename
+ * @param {string} currentTitle - Current title text
+ * @param {(newTitle: string) => void} onRename - Callback when renamed
+ */
+function showInlineRename(labelElem, currentTitle, onRename) {
+    // Create inline input
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = currentTitle;
+    input.classList.add('comfy-mobile-form-inline-rename');
+    
+    const originalText = labelElem.textContent;
+    labelElem.textContent = '';
+    labelElem.appendChild(input);
+    
+    input.focus();
+    input.select();
+    
+    const finish = (save = true) => {
+        const newTitle = input.value.trim();
+        input.remove();
+        
+        if (save && newTitle && newTitle !== currentTitle) {
+            labelElem.textContent = newTitle;
+            onRename(newTitle);
+        } else {
+            labelElem.textContent = originalText;
+        }
+    };
+    
+    input.addEventListener('blur', () => finish(true));
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            finish(true);
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            finish(false);
+        }
+    });
+}
+
+/**
+ * Show rename dialog for a node or section
+ * @param {string} currentTitle - Current title
+ * @param {string} itemType - Type of item being renamed (e.g., "Node", "Section")
+ * @param {(newTitle: string) => void} onRename - Callback when renamed
+ */
+export function showRenameDialog(currentTitle, itemType, onRename) {
+    const overlay = document.createElement('div');
+    overlay.classList.add('comfy-mobile-form-dialog-overlay');
+    
+    const dialog = document.createElement('div');
+    dialog.classList.add('comfy-mobile-form-dialog');
+    dialog.innerHTML = `
+        <div class="comfy-mobile-form-dialog-header">
+            <h3>Rename ${itemType}</h3>
+            <button class="comfy-mobile-form-dialog-close" aria-label="Close dialog">✕</button>
+        </div>
+        <div class="comfy-mobile-form-dialog-body">
+            <div class="comfy-mobile-form-rename-field">
+                <label>Name</label>
+                <input type="text" class="comfy-mobile-form-rename-input" value="${escapeHtml(currentTitle)}" placeholder="Enter new name...">
+            </div>
+        </div>
+        <div class="comfy-mobile-form-dialog-footer">
+            <button class="comfy-mobile-form-dialog-btn secondary" data-action="cancel">Cancel</button>
+            <button class="comfy-mobile-form-dialog-btn primary" data-action="rename">Rename</button>
+        </div>
+    `;
+    
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+    
+    const input = /** @type {HTMLInputElement} */ (dialog.querySelector('.comfy-mobile-form-rename-input'));
+    input.focus();
+    input.select();
+    
+    const close = () => {
+        overlay.remove();
+    };
+    
+    const doRename = () => {
+        const newTitle = input.value.trim();
+        if (newTitle && newTitle !== currentTitle) {
+            onRename(newTitle);
+        }
+        close();
+    };
+    
+    // Close button
+    dialog.querySelector('.comfy-mobile-form-dialog-close')?.addEventListener('click', close);
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) close();
+    });
+    
+    // Action buttons
+    dialog.querySelectorAll('[data-action]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const action = btn.getAttribute('data-action');
+            if (action === 'rename') {
+                doRename();
+            } else {
+                close();
+            }
+        });
+    });
+    
+    // Enter to submit, Escape to cancel
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            doRename();
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            close();
+        }
+    });
+}
+
+/**
  * @param {HTMLDivElement} elem 
  * @param {string} title 
+ * @param {ComfyUIGraphNode} [node] - Optional node for rename support
  */
-export function addTitle(elem, title) {
+export function addTitle(elem, title, node) {
     const label_elem = document.createElement('label');
     label_elem.classList.add("comfy-mobile-form-label");
     label_elem.textContent = title;
+    
+    // Add double-click to rename if node is provided
+    if (node) {
+        label_elem.style.cursor = 'text';
+        label_elem.title = 'Double-click to rename';
+        
+        label_elem.addEventListener('dblclick', (e) => {
+            e.stopPropagation();
+            showInlineRename(label_elem, node.title || title, (newTitle) => {
+                node.title = newTitle;
+                // Trigger graph change to save
+                if (currentGraph) {
+                    currentGraph.setDirtyCanvas?.(true, true);
+                }
+            });
+        });
+    }
+    
     elem.appendChild(label_elem);
 }
 

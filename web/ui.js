@@ -1,6 +1,6 @@
 // @ts-check
 
-import { createWidgetFromNode, setCurrentGraph, getWidgetOrder, saveWidgetOrder } from "./widget.js";
+import { createWidgetFromNode, setCurrentGraph, getWidgetOrder, saveWidgetOrder, showRenameDialog } from "./widget.js";
 import { OutputsManager, getOutputNodeTypes } from "./outputs.js";
 import { 
     MOBILE_BREAKPOINT, 
@@ -282,8 +282,13 @@ export class MobileFormUI {
                 <span class="btn-icon">▶</span>
                 <span class="btn-label">Queue</span>
             </button>
-            <button class="comfy-mobile-form-batch-btn" title="Batch Queue">
-                <span class="btn-icon">📦</span>
+            <button class="comfy-mobile-form-batch-btn" title="Batch Queue (Shift+Q)">
+                <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="3" width="7" height="7"/>
+                    <rect x="14" y="3" width="7" height="7"/>
+                    <rect x="14" y="14" width="7" height="7"/>
+                    <rect x="3" y="14" width="7" height="7"/>
+                </svg>
                 <span class="btn-label">Batch</span>
             </button>
             <button class="comfy-mobile-form-cancel-btn" title="Cancel Current">
@@ -319,7 +324,7 @@ export class MobileFormUI {
         dialog.classList.add('comfy-mobile-form-dialog');
         dialog.innerHTML = `
             <div class="comfy-mobile-form-dialog-header">
-                <h3>📦 Batch Queue</h3>
+                <h3>Batch Queue</h3>
                 <button class="comfy-mobile-form-dialog-close" aria-label="Close dialog">✕</button>
             </div>
             <div class="comfy-mobile-form-dialog-body">
@@ -1231,7 +1236,7 @@ export class MobileFormUI {
                 headerElem.classList.add('comfy-mobile-form-section-header');
                 headerElem.innerHTML = `
                     <span class="comfy-mobile-form-section-toggle">${isCollapsed ? '▶' : '▼'}</span>
-                    <span class="comfy-mobile-form-section-title">${section.title}</span>
+                    <span class="comfy-mobile-form-section-title" title="Double-click to rename">${section.title}</span>
                     <span class="comfy-mobile-form-section-count">${section.nodes.length}</span>
                 `;
                 
@@ -1243,6 +1248,25 @@ export class MobileFormUI {
                     if (toggle) toggle.textContent = collapsed ? '▶' : '▼';
                     this.#setSectionCollapsed(section.title, collapsed);
                 });
+                
+                // Add double-click to rename section (renames the underlying group)
+                const titleElem = headerElem.querySelector('.comfy-mobile-form-section-title');
+                if (titleElem && section.group) {
+                    titleElem.style.cursor = 'text';
+                    titleElem.addEventListener('dblclick', (e) => {
+                        e.stopPropagation();
+                        showRenameDialog(section.group.title, 'Group', (newTitle) => {
+                            section.group.title = newTitle;
+                            titleElem.textContent = newTitle;
+                            // Update section ID
+                            sectionElem.dataset.sectionId = newTitle.toLowerCase().replace(/\s+/g, '-');
+                            // Trigger graph change
+                            if (this.#app.graph) {
+                                this.#app.graph.setDirtyCanvas?.(true, true);
+                            }
+                        });
+                    });
+                }
                 
                 sectionElem.appendChild(headerElem);
                 
@@ -1296,6 +1320,8 @@ export class MobileFormUI {
                     if (toggle) toggle.textContent = collapsed ? '▶' : '▼';
                     this.#setSectionCollapsed('Other', collapsed);
                 });
+                
+                // "Other" section can't be renamed (no backing group)
                 
                 sectionElem.appendChild(headerElem);
                 

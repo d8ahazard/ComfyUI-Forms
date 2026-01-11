@@ -818,10 +818,7 @@ export class OutputsManager {
         if (!this.#widgetsContainer) return;
         this.#widgetsContainer.innerHTML = '';
         
-        if (this.#outputNodes.length === 0) {
-            // No widgets to show
-            return;
-        }
+        if (this.#outputNodes.length === 0) return;
         
         // Add a header for the output nodes section
         const header = document.createElement('div');

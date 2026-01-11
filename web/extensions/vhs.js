@@ -26,7 +26,7 @@ export function initVHSExtension(registry) {
     registry.registerNodeHandler(['VHS_LoadVideo', 'LoadVideoUpload'], (context) => {
         const { elem, node, addTitle, addWidget, addLoadedVideoPreview } = context;
         
-        addTitle(elem, node.title || 'Load Video (VHS)');
+        addTitle(elem, node.title || 'Load Video (VHS)', node);
         
         if (!Array.isArray(node.widgets)) return true;
         
@@ -75,7 +75,7 @@ export function initVHSExtension(registry) {
     registry.registerNodeHandler(['LoadVideoPath', 'LoadVideoFFmpegPath'], (context) => {
         const { elem, node, addTitle, addWidget } = context;
         
-        addTitle(elem, node.title || 'Load Video (Path)');
+        addTitle(elem, node.title || 'Load Video (Path)', node);
         
         // Show info about path-based loading
         const infoElem = document.createElement('div');
@@ -115,7 +115,7 @@ export function initVHSExtension(registry) {
     registry.registerNodeHandler('LoadVideoFFmpegUpload', (context) => {
         const { elem, node, addTitle, addWidget, addLoadedVideoPreview } = context;
         
-        addTitle(elem, node.title || 'Load Video (FFmpeg)');
+        addTitle(elem, node.title || 'Load Video (FFmpeg)', node);
         
         if (!Array.isArray(node.widgets)) return true;
         
@@ -164,7 +164,7 @@ export function initVHSExtension(registry) {
     registry.registerNodeHandler(['VHS_LoadAudio', 'LoadAudioUpload'], (context) => {
         const { elem, node, addTitle, addWidget } = context;
         
-        addTitle(elem, node.title || 'Load Audio (VHS)');
+        addTitle(elem, node.title || 'Load Audio (VHS)', node);
         
         if (!Array.isArray(node.widgets)) return true;
         
@@ -202,7 +202,7 @@ export function initVHSExtension(registry) {
     registry.registerNodeHandler(['LoadImagesFromDirectoryUpload', 'LoadImagesFromDirectoryPath'], (context) => {
         const { elem, node, addTitle, addWidget } = context;
         
-        addTitle(elem, node.title || 'Load Images (Directory)');
+        addTitle(elem, node.title || 'Load Images (Directory)', node);
         
         // Show info
         const infoElem = document.createElement('div');
@@ -242,7 +242,7 @@ export function initVHSExtension(registry) {
     registry.registerNodeHandler('LoadImagePath', (context) => {
         const { elem, node, addTitle, addWidget } = context;
         
-        addTitle(elem, node.title || 'Load Image (Path)');
+        addTitle(elem, node.title || 'Load Image (Path)', node);
         
         // Show info
         const infoElem = document.createElement('div');
