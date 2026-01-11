@@ -1,6 +1,6 @@
-class MobileFormSettings:
+class FormSettings:
     """
-    Stores MobileForm layout settings (widget sizes, colors, breaks) as part of the workflow.
+    Stores ComfyUI-Forms layout settings (widget sizes, colors, breaks) as part of the workflow.
     Add this node to your workflow to persist form layout when saving/loading.
     The settings are stored in a hidden multiline text field that the frontend manages.
     """
@@ -22,7 +22,7 @@ class MobileFormSettings:
     
     RETURN_TYPES = ()
     FUNCTION = "store"
-    CATEGORY = "MobileForm"
+    CATEGORY = "Forms"
     OUTPUT_NODE = True
     
     def store(self, settings_json="{}"):
@@ -35,12 +35,19 @@ class MobileFormSettings:
         return float("nan")
 
 
+# Alias for backwards compatibility
+MobileFormSettings = FormSettings
+
+
 NODE_CLASS_MAPPINGS = {
-    "MobileFormSettings": MobileFormSettings
+    "FormSettings": FormSettings,
+    # Legacy alias - maps to same class for backward compatibility
+    "MobileFormSettings": FormSettings
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "MobileFormSettings": "Mobile Form Settings"
+    "FormSettings": "Form Settings",
+    "MobileFormSettings": "Form Settings"  # Legacy nodes show new name
 }
 
 WEB_DIRECTORY = "./web"

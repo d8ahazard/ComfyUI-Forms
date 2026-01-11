@@ -84,28 +84,27 @@ git clone https://github.com/123jimin/ComfyUI-Forms
 
 ## 🎯 Quick Start
 
-### 1. Create a Mobile Form Group
-Create a group in your workflow named one of:
-- `Mobile Form`
-- `Mobile UI`
-- `Mobile Inputs`
+### 1. Create an Inputs Group
+Create a group in your workflow named:
+- **`Form Inputs`** (recommended)
+- Legacy names also work: `Mobile Form`, `Mobile UI`, `Mobile Inputs`
 
 ### 2. Add Your Nodes
 Place input nodes inside the group:
 - Primitive nodes (strings, numbers, etc.)
 - KSampler for settings like steps, cfg
-- Load Image/Video nodes
+- Load Image/Video nodes  
 - Any node with configurable widgets
 
 ### 3. Create an Outputs Group (Optional)
 Create a group named:
-- `Mobile Outputs` (recommended)
-- `Outputs`
+- **`Form Outputs`** (recommended)
+- Legacy names also work: `Mobile Outputs`, `Outputs`
 
 Place your output nodes inside (SaveImage, PreviewImage, VHS_VideoCombine, etc.)
 
 ### 4. Add Settings Node (Recommended)
-Add a `MobileFormSettings` node to your workflow. This saves all your widget customizations with the workflow file.
+Add a **`Form Settings`** node to your workflow. This saves all your widget customizations with the workflow file.
 
 ### 5. Open the Form
 - **Mobile**: Add `#mobile` to URL or tap the 📱 icon in the sidebar
@@ -153,7 +152,7 @@ Click the ⚙️ dot on any widget to open the context menu:
 | **Show/Hide Fields** | Toggle visibility of individual widgets within a node |
 
 ### Layout Tips
-1. **Use subgroups**: Nodes in subgroups within Mobile Form automatically get grouped into sections with matching colors
+1. **Use subgroups**: Nodes in subgroups within Form Inputs automatically get grouped into sections with matching colors
 2. **Color coding**: Use colors to categorize related settings (e.g., all prompt fields in purple)
 3. **Row breaks**: Add "New Row" to logically separate widget groups
 4. **Column widths**: Wide widgets (2-4) work great for prompts and images
@@ -194,7 +193,7 @@ Each run will use an incrementing seed value, perfect for generating variations!
 ## 💾 Saving Your Layout
 
 ### Automatic Persistence
-Add a `MobileFormSettings` node to your workflow. All widget customizations are automatically saved:
+Add a **`Form Settings`** node to your workflow. All widget customizations are automatically saved:
 - Width, height, color settings
 - Widget order
 - Row breaks
@@ -203,7 +202,7 @@ Add a `MobileFormSettings` node to your workflow. All widget customizations are 
 - Section collapse states
 
 ### Migration from v1
-If you have existing localStorage settings, they'll automatically migrate to your workflow the first time you add the MobileFormSettings node.
+If you have existing localStorage settings, they'll automatically migrate to your workflow the first time you add the Form Settings node.
 
 ---
 
@@ -294,7 +293,7 @@ Access settings via the ⚙️ button next to the Form menu item:
 ## 🔧 Troubleshooting
 
 ### Form not appearing?
-- Ensure you have a group named "Mobile Form" or similar
+- Ensure you have a group named **"Form Inputs"** (or legacy "Mobile Form")
 - Check that nodes are fully inside the group boundaries
 - Try adding `#mobile` to your URL
 
@@ -305,13 +304,13 @@ Access settings via the ⚙️ button next to the Form menu item:
 - Some widget types may not be supported yet
 
 ### Outputs not showing?
-- Create a "Mobile Outputs" group
+- Create a **"Form Outputs"** group (or legacy "Mobile Outputs")
 - Place output nodes inside the group
 - Run the workflow to generate outputs
 - Outputs persist between page reloads
 
 ### Layout not saving?
-- Add a `MobileFormSettings` node to your workflow
+- Add a **`Form Settings`** node to your workflow
 - Save the workflow after customizing
 
 ### Video thumbnails broken?

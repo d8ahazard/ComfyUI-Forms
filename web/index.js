@@ -210,11 +210,11 @@ app.registerExtension({
     },
     
     /**
-     * Customize the MobileFormSettings node to hide the settings widget
+     * Customize the FormSettings node to hide the settings widget
      * and make it look clean
      */
     async nodeCreated(node) {
-        if (node.comfyClass === "MobileFormSettings") {
+        if (node.comfyClass === "FormSettings" || node.comfyClass === "MobileFormSettings") {
             // Hide the settings_json widget - it's managed by the form UI
             if (node.widgets) {
                 for (const w of node.widgets) {
@@ -233,15 +233,15 @@ app.registerExtension({
             node.setSize?.(node.size);
             
             // Add a helpful title
-            if (!node.title || node.title === "Mobile Form Settings") {
-                node.title = "📋 Mobile Form Settings";
+            if (!node.title || node.title === "Mobile Form Settings" || node.title === "Form Settings") {
+                node.title = "📋 Form Settings";
             }
             
             // Migrate localStorage settings to workflow if this is a new node
             setTimeout(() => {
                 migrateLocalStorageToWorkflow();
                 const debug = getSettingsDebugInfo();
-                log("MobileFormSettings configured - localStorage:", debug.localStorage, "workflow:", debug.workflow);
+                log("FormSettings configured - localStorage:", debug.localStorage, "workflow:", debug.workflow);
             }, 100);
         }
     },
@@ -351,7 +351,7 @@ app.registerExtension({
         setTimeout(() => {
             const debug = getSettingsDebugInfo();
             if (debug.hasNode) {
-                log("Workflow loaded with MobileFormSettings node - workflow settings:", debug.workflow, "localStorage backup:", debug.localStorage);
+                log("Workflow loaded with FormSettings node - workflow settings:", debug.workflow, "localStorage backup:", debug.localStorage);
             }
         }, 200);
     },

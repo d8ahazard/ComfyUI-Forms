@@ -16,10 +16,12 @@ import { api } from "../../scripts/api.js";
 
 /**
  * Group title patterns
+ * Official names: "Form Inputs" and "Form Outputs"
+ * Legacy support: "Mobile Form", "Mobile UI", "Mobile Inputs", "Mobile Outputs", "Outputs"
  */
-const INPUT_GROUP_PATTERN = /^\s*mobile\s*(?:form|ui|inputs?)\s*$/i;
-const OUTPUT_GROUP_PATTERN = /^\s*(?:mobile\s*)?outputs?\s*$/i;
-const MOBILE_OUTPUT_GROUP_PATTERN = /^\s*mobile\s*outputs?\s*$/i;
+const INPUT_GROUP_PATTERN = /^\s*(?:form\s*inputs?|mobile\s*(?:form|ui|inputs?))\s*$/i;
+const OUTPUT_GROUP_PATTERN = /^\s*(?:form\s*outputs?|(?:mobile\s*)?outputs?)\s*$/i;
+const FORM_OUTPUT_GROUP_PATTERN = /^\s*(?:form\s*outputs?|mobile\s*outputs?)\s*$/i;
 
 /**
  * Subgroup colors - assigned automatically to nodes in the same subgroup
@@ -1123,7 +1125,7 @@ export class MobileFormUI {
         const inputGroup = graph._groups.find((g) => INPUT_GROUP_PATTERN.test(g.title));
         
         // Find output groups - prefer "Mobile Outputs" specifically
-        const mobileOutputGroup = graph._groups.find((g) => MOBILE_OUTPUT_GROUP_PATTERN.test(g.title));
+        const formOutputGroup = graph._groups.find((g) => FORM_OUTPUT_GROUP_PATTERN.test(g.title));
         const outputGroup = graph._groups.find((g) => OUTPUT_GROUP_PATTERN.test(g.title));
         
         // Process inputs
@@ -1161,17 +1163,17 @@ export class MobileFormUI {
                     </div>
                     <div class="comfy-mobile-form-empty-state-hint">
                         <div class="comfy-mobile-form-empty-state-hint-item">Right-click on canvas → Add Group</div>
-                        <div class="comfy-mobile-form-empty-state-hint-item">Name it <strong style="color: var(--mf-accent)">"Mobile Form"</strong></div>
+                        <div class="comfy-mobile-form-empty-state-hint-item">Name it <strong style="color: var(--mf-accent)">"Form Inputs"</strong></div>
                         <div class="comfy-mobile-form-empty-state-hint-item">Place your input nodes inside</div>
                     </div>
                 </div>
             `;
         }
         
-        // Process outputs - if "Mobile Outputs" group exists, render those nodes as widgets
-        if(mobileOutputGroup) {
+        // Process outputs - if "Form Outputs" group exists, render those nodes as widgets
+        if(formOutputGroup) {
             // Get ALL nodes in the output group
-            const nodesInGroup = graph._nodes.filter((n) => isGroupContainingNode(mobileOutputGroup, n));
+            const nodesInGroup = graph._nodes.filter((n) => isGroupContainingNode(formOutputGroup, n));
             
             // Render output nodes as widgets
             this.#outputsManager?.setOutputNodes(nodesInGroup);
@@ -1206,7 +1208,7 @@ export class MobileFormUI {
                     <div class="comfy-mobile-form-empty-state-icon">🔧</div>
                     <div class="comfy-mobile-form-empty-state-title">Empty Form Group</div>
                     <div class="comfy-mobile-form-empty-state-description">
-                        Add nodes to your "Mobile Form" group to create form inputs.
+                        Add nodes to your "Form Inputs" group to create form inputs.
                     </div>
                     <div class="comfy-mobile-form-empty-state-hint">
                         <div class="comfy-mobile-form-empty-state-hint-item">Primitives (numbers, text, etc.)</div>

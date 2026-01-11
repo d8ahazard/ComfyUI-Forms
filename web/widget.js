@@ -37,16 +37,16 @@ export function setCurrentGraph(graph) {
 }
 
 /**
- * Find the MobileFormSettings node in the graph
+ * Find the FormSettings node in the graph (supports legacy MobileFormSettings)
  * @returns {ComfyUIGraphNode | null}
  */
 function findSettingsNode() {
     if (!currentGraph || !currentGraph._nodes) return null;
-    return currentGraph._nodes.find(n => n.type === 'MobileFormSettings') || null;
+    return currentGraph._nodes.find(n => n.type === 'FormSettings' || n.type === 'MobileFormSettings') || null;
 }
 
 /**
- * Get all widget settings from the MobileFormSettings node
+ * Get all widget settings from the FormSettings node
  * @returns {AllWidgetSettings}
  */
 function getWorkflowSettings() {
@@ -76,7 +76,7 @@ function getWorkflowSettings() {
 }
 
 /**
- * Save all widget settings to the MobileFormSettings node
+ * Save all widget settings to the FormSettings node
  * @param {AllWidgetSettings} allSettings 
  */
 function saveWorkflowSettings(allSettings) {
@@ -207,7 +207,7 @@ export function saveWidgetOrder(order) {
 
 /**
  * Migrate localStorage settings to the workflow node
- * Called when a MobileFormSettings node is first found in the workflow
+ * Called when a FormSettings node is first found in the workflow
  */
 export function migrateLocalStorageToWorkflow() {
     const settingsNode = findSettingsNode();
