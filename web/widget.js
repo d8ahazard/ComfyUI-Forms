@@ -15,6 +15,7 @@ initializeExtensions();
  * @property {string} [color] - "default", "blue", "green", "purple", "orange", "red"
  * @property {string} [break] - "true" to start a new row before this widget
  * @property {string} [tooltip] - Custom tooltip/hint text for this widget
+ * @property {string[]} [hiddenWidgets] - Array of widget names to hide from this node
  */
 
 /**
@@ -152,6 +153,17 @@ export function saveWidgetSettings(nodeId, settings) {
         allSettings[nodeId] = settings;
         saveWorkflowSettings(allSettings);
     }
+}
+
+/**
+ * Check if a specific widget within a node should be hidden
+ * @param {number} nodeId 
+ * @param {string} widgetName 
+ * @returns {boolean}
+ */
+export function isWidgetHidden(nodeId, widgetName) {
+    const settings = getWidgetSettings(nodeId);
+    return settings.hiddenWidgets?.includes(widgetName) || false;
 }
 
 /**
@@ -517,7 +529,7 @@ async function getNodeDefaultTooltip(nodeId) {
     // @ts-ignore
     const nodeDefs = app.registerNodesFromDefs?.nodeDefs || LiteGraph?.registered_node_types?.[nodeType];
     if (nodeDefs?.description) {
-        return nodeDefs.description;
+        return stripHtml(nodeDefs.description);
     }
     
     // Try to get from ComfyUI node info
@@ -525,7 +537,7 @@ async function getNodeDefaultTooltip(nodeId) {
         // @ts-ignore
         const objectInfo = await app.api?.getNodeDefs?.();
         if (objectInfo?.[nodeType]?.description) {
-            return objectInfo[nodeType].description;
+            return stripHtml(objectInfo[nodeType].description);
         }
     } catch (e) {
         // Ignore
@@ -544,6 +556,18 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+/**
+ * Strip HTML tags from text, returning plain text
+ * @param {string} html 
+ * @returns {string}
+ */
+function stripHtml(html) {
+    if (!html) return '';
+    const div = document.createElement('div');
+    div.innerHTML = html;
+    return div.textContent || div.innerText || '';
 }
 
 /**
@@ -942,6 +966,88 @@ async function showContextMenu(widgetElem, nodeId, x, y) {
     }
     menu.appendChild(moveSection);
     
+    // Advanced section - show/hide individual widgets within this node
+    const node = currentGraph?._nodes?.find(n => n.id === nodeId);
+    if (node && Array.isArray(node.widgets) && node.widgets.length > 1) {
+        const advancedSection = document.createElement('div');
+        advancedSection.classList.add('comfy-mobile-form-context-menu-section');
+        advancedSection.innerHTML = `<div class="comfy-mobile-form-context-menu-label">Show/Hide Fields</div>`;
+        
+        const hiddenWidgets = settings.hiddenWidgets || [];
+        
+        // Create scrollable container for widget toggles
+        const widgetList = document.createElement('div');
+        widgetList.classList.add('comfy-mobile-form-context-menu-widget-list');
+        
+        for (const widget of node.widgets) {
+            // Skip internal/hidden widgets
+            if (widget.type === 'converted-widget' || widget.name?.startsWith('_')) continue;
+            
+            const initiallyHidden = hiddenWidgets.includes(widget.name);
+            const item = document.createElement('div');
+            item.classList.add('comfy-mobile-form-context-menu-item');
+            if (!initiallyHidden) item.classList.add('active');
+            item.innerHTML = `<span class="check-icon">${initiallyHidden ? '' : '✓'}</span><span class="widget-name">${widget.name}</span>`;
+            item.title = `${initiallyHidden ? 'Show' : 'Hide'} the "${widget.name}" field`;
+            item.dataset.widgetName = widget.name;
+            
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                
+                // Re-read current state from settings (don't use captured value)
+                const currentSettings = getWidgetSettings(nodeId);
+                const currentHidden = currentSettings.hiddenWidgets || [];
+                const isCurrentlyHidden = currentHidden.includes(widget.name);
+                
+                // Toggle visibility
+                if (isCurrentlyHidden) {
+                    // Remove from hidden list (show it)
+                    currentSettings.hiddenWidgets = currentHidden.filter(n => n !== widget.name);
+                } else {
+                    // Add to hidden list (hide it)
+                    currentSettings.hiddenWidgets = [...currentHidden, widget.name];
+                }
+                
+                saveWidgetSettings(nodeId, currentSettings);
+                
+                // Update menu UI immediately (now showing opposite state)
+                const nowHidden = !isCurrentlyHidden;
+                item.classList.toggle('active', !nowHidden);
+                const checkIcon = item.querySelector('.check-icon');
+                if (checkIcon) checkIcon.textContent = nowHidden ? '' : '✓';
+                item.title = `${nowHidden ? 'Show' : 'Hide'} the "${widget.name}" field`;
+                
+                // For hiding: directly hide the widget wrapper
+                // For unhiding: need to re-render since element might not exist
+                if (nowHidden) {
+                    // Hiding - find and hide the wrapper
+                    const widgetWrappers = widgetElem.querySelectorAll('.comfy-mobile-form-widget-wrapper');
+                    widgetWrappers.forEach(wrapper => {
+                        const label = wrapper.querySelector('.comfy-mobile-form-label');
+                        if (label && label.textContent === widget.name) {
+                            wrapper.style.display = 'none';
+                        }
+                    });
+                } else {
+                    // Unhiding - close menu and trigger re-render since element may not exist
+                    closeContextMenu();
+                    const formContainer = document.querySelector('.comfy-mobile-form');
+                    if (formContainer) {
+                        formContainer.dispatchEvent(new CustomEvent('mf-widget-visibility-changed', { 
+                            bubbles: true, 
+                            detail: { nodeId } 
+                        }));
+                    }
+                }
+            });
+            
+            widgetList.appendChild(item);
+        }
+        
+        advancedSection.appendChild(widgetList);
+        menu.appendChild(advancedSection);
+    }
+    
     // Position menu
     document.body.appendChild(menu);
     
@@ -1249,7 +1355,8 @@ export function createWidgetFromNode(elem, node) {
                 addLoadedImagePreview,
                 addLoadedVideoPreview,
                 addNodeImagePreview,
-                addNodeImgsPreview
+                addNodeImgsPreview,
+                isWidgetHidden: (widgetName) => isWidgetHidden(node.id, widgetName)
             });
             
             // Extension handlers are responsible for deciding whether to show
@@ -1422,8 +1529,9 @@ export function createWidgetFromNode(elem, node) {
 
                 let widgetCount = 0;
                 for(const widget of node.widgets) {
-                    // Skip hidden widgets and converted widgets
+                    // Skip hidden widgets, converted widgets, and user-hidden widgets
                     if(widget.hidden || widget.type === 'converted-widget') continue;
+                    if(isWidgetHidden(node.id, widget.name)) continue;
                     
                     const widgetWrapper = document.createElement('div');
                     widgetWrapper.classList.add("comfy-mobile-form-widget-wrapper");

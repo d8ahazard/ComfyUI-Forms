@@ -271,6 +271,14 @@ export class MobileFormUI {
         
         // Setup keyboard shortcuts
         this.#setupKeyboardShortcuts();
+        
+        // Listen for widget visibility changes that require re-render (unhiding)
+        this.#elem.addEventListener('mf-widget-visibility-changed', () => {
+            // Re-render the form to show newly unhidden widgets
+            if (this.#app.graph) {
+                this.setGraph(this.#app.graph);
+            }
+        });
     }
     
     /**

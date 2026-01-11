@@ -868,6 +868,31 @@
     opacity: 1;
 }
 
+/* Widget list in context menu (for show/hide fields) */
+.comfy-mobile-form-context-menu-widget-list {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.comfy-mobile-form-context-menu-widget-list .comfy-mobile-form-context-menu-item {
+    font-size: 12px;
+    padding: 6px 12px;
+}
+
+.comfy-mobile-form-context-menu-widget-list .widget-name {
+    font-family: var(--mf-font-mono, monospace);
+    opacity: 0.9;
+}
+
+.comfy-mobile-form-context-menu-widget-list .comfy-mobile-form-context-menu-item:not(.active) {
+    opacity: 0.5;
+    text-decoration: line-through;
+}
+
+.comfy-mobile-form-context-menu-widget-list .comfy-mobile-form-context-menu-item:not(.active):hover {
+    opacity: 0.8;
+}
+
 /* Color swatches in context menu */
 .comfy-mobile-form-context-menu-colors {
     display: flex;

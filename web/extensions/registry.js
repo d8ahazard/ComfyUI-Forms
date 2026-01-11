@@ -9,12 +9,13 @@
  * @typedef {Object} NodeHandlerContext
  * @property {HTMLDivElement} elem - The container element to render into
  * @property {ComfyUIGraphNode} node - The node being rendered
- * @property {function(HTMLDivElement, string): void} addTitle - Helper to add a title
+ * @property {function(HTMLDivElement, string, ComfyUIGraphNode=): void} addTitle - Helper to add a title (optional node for rename support)
  * @property {function(HTMLDivElement, ComfyUIGraphWidget, ComfyUIGraphNode): boolean} addWidget - Helper to add a widget
  * @property {function(HTMLDivElement, string, string, ComfyUIGraphNode): (newFilename: string) => void} addLoadedImagePreview - Helper to add image preview from file, returns update function
  * @property {function(HTMLDivElement, string, string, ComfyUIGraphNode): (newFilename: string) => void} addLoadedVideoPreview - Helper to add video preview from file, returns update function
  * @property {function(HTMLDivElement, ComfyUIGraphNode): void} addNodeImagePreview - Helper to add execution result images (node.images)
  * @property {function(HTMLDivElement, ComfyUIGraphNode): void} addNodeImgsPreview - Helper to add execution result images (node.imgs)
+ * @property {function(string): boolean} isWidgetHidden - Check if a specific widget should be hidden
  */
 
 /**
@@ -189,50 +190,139 @@ class ExtensionRegistryClass {
 // Singleton instance
 export const ExtensionRegistry = new ExtensionRegistryClass();
 
+// ============================================
+// DECLARATIVE NODE DEFINITION SYSTEM
+// ============================================
+
 /**
- * Helper to create a node handler that shows widgets in a group
- * @param {Object} options
- * @param {string[]} [options.previewWidgets] - Widget names to show as previews (image/video)
- * @param {string} [options.previewType] - Type of preview: 'image' | 'video' | 'audio'
- * @param {string} [options.previewFolder] - Folder type: 'input' | 'output' | 'temp'
- * @param {string[]} [options.skipWidgets] - Widget names to skip
+ * @typedef {Object} NodePreviewConfig
+ * @property {'image' | 'video' | 'audio'} type - Media type
+ * @property {string | string[]} widget - Widget name(s) to find for the preview source
+ * @property {'input' | 'output' | 'temp'} [folder='input'] - File location
+ * @property {string | string[]} [subfolderWidget] - Widget name(s) for subfolder
+ */
+
+/**
+ * @typedef {Object} NodeInfoConfig
+ * @property {string} icon - Icon emoji
+ * @property {string} text - Description text
+ */
+
+/**
+ * @typedef {Object} NodeConfig
+ * @property {string} [title] - Display title (fallback: node.title or node.type)
+ * @property {NodePreviewConfig} [preview] - Media preview configuration
+ * @property {NodeInfoConfig} [info] - Info banner configuration
+ * @property {string[]} [skipWidgets] - Widget names to exclude
+ * @property {NodeHandler} [custom] - Custom handler for special cases (overrides all other config)
+ */
+
+/**
+ * Create a handler from a declarative node config
+ * @param {NodeConfig} config 
  * @returns {NodeHandler}
  */
-export function createStandardNodeHandler(options = {}) {
-    const { previewWidgets = [], previewType = 'image', previewFolder = 'input', skipWidgets = [] } = options;
+export function createHandlerFromConfig(config) {
+    // If custom handler provided, use it directly
+    if (config.custom) {
+        return config.custom;
+    }
     
     return function(context) {
-        const { elem, node, addTitle, addWidget, addLoadedImagePreview, addLoadedVideoPreview } = context;
+        const { elem, node, addTitle, addWidget, addLoadedImagePreview, addLoadedVideoPreview, isWidgetHidden } = context;
         
-        addTitle(elem, node.title || node.type || 'Node', node);
+        // Add title
+        const displayTitle = config.title || node.title || node.type || 'Node';
+        addTitle(elem, displayTitle, node);
+        
+        // Add info banner if configured
+        if (config.info) {
+            const infoElem = document.createElement('div');
+            infoElem.classList.add('comfy-mobile-form-info');
+            infoElem.innerHTML = `
+                <div class="comfy-mobile-form-info-icon">${config.info.icon}</div>
+                <div class="comfy-mobile-form-info-text">${config.info.text}</div>
+            `;
+            elem.appendChild(infoElem);
+        }
         
         if (!Array.isArray(node.widgets)) return true;
         
-        // Handle preview widgets first
-        for (const widgetName of previewWidgets) {
-            const widget = node.widgets.find(w => w.name === widgetName);
-            if (widget?.value) {
-                if (previewType === 'image') {
-                    addLoadedImagePreview(elem, String(widget.value), previewFolder, node);
-                } else if (previewType === 'video') {
-                    addLoadedVideoPreview(elem, String(widget.value), previewFolder, node);
+        // Handle media preview if configured
+        let updatePreview = null;
+        let previewWidget = null;
+        let subfolderWidget = null;
+        
+        if (config.preview) {
+            const previewWidgetNames = Array.isArray(config.preview.widget) 
+                ? config.preview.widget 
+                : [config.preview.widget];
+            const folder = config.preview.folder || 'input';
+            
+            // Find the preview widget
+            previewWidget = node.widgets.find(w => previewWidgetNames.includes(w.name));
+            
+            // Find subfolder widget if configured
+            if (config.preview.subfolderWidget) {
+                const subfolderNames = Array.isArray(config.preview.subfolderWidget)
+                    ? config.preview.subfolderWidget
+                    : [config.preview.subfolderWidget];
+                subfolderWidget = node.widgets.find(w => subfolderNames.includes(w.name));
+            }
+            
+            // Helper to get full path with subfolder
+            const getFullPath = () => {
+                const subfolder = subfolderWidget?.value ? String(subfolderWidget.value) : '';
+                const filename = previewWidget?.value ? String(previewWidget.value) : '';
+                return subfolder ? `${subfolder}/${filename}` : filename;
+            };
+            
+            // Add preview with update function
+            if (previewWidget?.value) {
+                const fullPath = getFullPath();
+                if (config.preview.type === 'image') {
+                    updatePreview = addLoadedImagePreview(elem, fullPath, folder, node);
+                } else if (config.preview.type === 'video') {
+                    updatePreview = addLoadedVideoPreview(elem, fullPath, folder, node);
+                } else if (config.preview.type === 'audio') {
+                    const audioUrl = getViewUrl(fullPath, folder);
+                    const player = createAudioPlayer(audioUrl);
+                    elem.appendChild(player);
                 }
             }
         }
         
-        // Add other widgets in a group
+        // Add widgets in a group
         const groupElem = document.createElement('div');
         groupElem.classList.add('comfy-mobile-form-group');
         
+        const skipWidgets = config.skipWidgets || [];
         let widgetCount = 0;
+        
         for (const widget of node.widgets) {
             if (widget.hidden || widget.type === 'converted-widget') continue;
             if (skipWidgets.includes(widget.name)) continue;
+            if (isWidgetHidden?.(widget.name)) continue;
             
             const widgetWrapper = document.createElement('div');
             widgetWrapper.classList.add('comfy-mobile-form-widget-wrapper');
             
             addTitle(widgetWrapper, widget.name);
+            
+            // Wrap callback for preview widgets to update preview
+            if (updatePreview && (widget === previewWidget || widget === subfolderWidget)) {
+                const originalCallback = widget.callback;
+                const getFullPath = () => {
+                    const subfolder = subfolderWidget?.value ? String(subfolderWidget.value) : '';
+                    const filename = previewWidget?.value ? String(previewWidget.value) : '';
+                    return subfolder ? `${subfolder}/${filename}` : filename;
+                };
+                widget.callback = (value) => {
+                    updatePreview(getFullPath());
+                    originalCallback?.(value);
+                };
+            }
+            
             if (addWidget(widgetWrapper, widget, node)) {
                 groupElem.appendChild(widgetWrapper);
                 widgetCount++;
@@ -245,6 +335,61 @@ export function createStandardNodeHandler(options = {}) {
         
         return true;
     };
+}
+
+/**
+ * Define a node handler using declarative configuration
+ * @param {ExtensionRegistryClass} registry - The extension registry
+ * @param {string | string[]} types - Node type(s) to handle
+ * @param {NodeConfig} config - Node configuration
+ */
+export function defineNode(registry, types, config) {
+    const handler = createHandlerFromConfig(config);
+    registry.registerNodeHandler(types, handler);
+}
+
+/**
+ * Batch define multiple nodes at once
+ * @param {ExtensionRegistryClass} registry - The extension registry
+ * @param {Record<string, NodeConfig>} definitions - Map of node type(s) to config
+ */
+export function defineNodes(registry, definitions) {
+    for (const [types, config] of Object.entries(definitions)) {
+        // Support comma-separated types in the key
+        const typeArray = types.includes(',') ? types.split(',').map(t => t.trim()) : types;
+        defineNode(registry, typeArray, config);
+    }
+}
+
+// Legacy compatibility - createStandardNodeHandler still works but uses new system
+/**
+ * Helper to create a node handler that shows widgets in a group
+ * @param {Object} options
+ * @param {string[]} [options.previewWidgets] - Widget names to show as previews (image/video)
+ * @param {string} [options.previewType] - Type of preview: 'image' | 'video' | 'audio'
+ * @param {string} [options.previewFolder] - Folder type: 'input' | 'output' | 'temp'
+ * @param {string[]} [options.skipWidgets] - Widget names to skip
+ * @returns {NodeHandler}
+ * @deprecated Use defineNode() with config instead
+ */
+export function createStandardNodeHandler(options = {}) {
+    const { previewWidgets = [], previewType = 'image', previewFolder = 'input', skipWidgets = [] } = options;
+    
+    /** @type {NodeConfig} */
+    const config = {
+        skipWidgets
+    };
+    
+    // Convert old preview format to new
+    if (previewWidgets.length > 0) {
+        config.preview = {
+            type: /** @type {'image' | 'video' | 'audio'} */ (previewType),
+            widget: previewWidgets,
+            folder: /** @type {'input' | 'output' | 'temp'} */ (previewFolder)
+        };
+    }
+    
+    return createHandlerFromConfig(config);
 }
 
 /**
@@ -346,4 +491,3 @@ export function getViewUrl(filename, type = 'input', subfolder = '') {
 }
 
 export default ExtensionRegistry;
-
